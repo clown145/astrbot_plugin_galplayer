@@ -1,0 +1,26 @@
+{
+  "input_method": {
+    "description": "选择按键输入模式。SendInput兼容性最强但需要游戏在前台；PostMessage可后台但对部分游戏无效。",
+    "type": "string",
+    "default": "SendInput",
+    "options": [
+      "PostMessage",
+      "SendInput"
+    ]
+  },
+  "cooldown_seconds": {
+    "description": "触发指令的最小时间间隔（秒），用于防刷屏。",
+    "type": "float",
+    "default": 3.0
+  },
+  "screenshot_delay_seconds": {
+    "description": "按键后等待多久再截图（秒），给游戏画面反应时间。",
+    "type": "float",
+    "default": 0.5
+  },
+  "quick_advance_key": {
+    "description": "发送 'g' 或 'gal' 时模拟按下的按键。",
+    "type": "string",
+    "default": "space"
+  }
+}
