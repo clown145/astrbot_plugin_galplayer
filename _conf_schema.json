@@ -16,11 +16,11 @@
   "screenshot_delay_seconds": {
     "description": "按键后等待多久再截图（秒），给游戏画面反应时间。",
     "type": "float",
-    "default": 0.5
+    "default": 1.0
   },
   "quick_advance_key": {
     "description": "发送 'g' 或 'gal' 时模拟按下的按键。",
     "type": "string",
-    "default": "space"
+    "default": "enter"
   }
 }
