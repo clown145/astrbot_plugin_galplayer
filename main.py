@@ -200,10 +200,13 @@ class GalgamePlayerPlugin(Star):
         if session_id in self.game_sessions:
             session = self.game_sessions[session_id]
             cooldown = self.config.get("cooldown_seconds", 3.0)
-            if time.time() - session.get("last_triggered_time", 0) < cooldown: return
+            current_time = time.time()
+            if current_time - session.get("last_triggered_time", 0) < cooldown:
+                return
+            
+            session["last_triggered_time"] = current_time
             
             await self._handle_game_action(event, session)
-            session["last_triggered_time"] = time.time()
         else:
             await event.send(event.plain_result("当前没有正在进行的游戏。"))
         event.stop_event()
@@ -216,10 +219,13 @@ class GalgamePlayerPlugin(Star):
         if session_id in self.game_sessions:
             session = self.game_sessions[session_id]
             cooldown = self.config.get("cooldown_seconds", 3.0)
-            if time.time() - session.get("last_triggered_time", 0) < cooldown: return
+            current_time = time.time()
+            if current_time - session.get("last_triggered_time", 0) < cooldown:
+                return
+            
+            session["last_triggered_time"] = current_time
             
             await self._handle_game_action(event, session, key_to_press=actual_key_name)
-            session["last_triggered_time"] = time.time()
         else:
             await event.send(event.plain_result("当前没有正在进行的游戏。"))
         event.stop_event()
@@ -250,9 +256,12 @@ class GalgamePlayerPlugin(Star):
         if message_text in ["g", "gal"]:
             session = self.game_sessions[session_id]
             cooldown = self.config.get("cooldown_seconds", 3.0)
-            if time.time() - session.get("last_triggered_time", 0) < cooldown: return
+            current_time = time.time()
+            if current_time - session.get("last_triggered_time", 0) < cooldown:
+                return
             
+            session["last_triggered_time"] = current_time
+
             quick_key = self.config.get("quick_advance_key", "space")
             await self._handle_game_action(event, session, key_to_press=quick_key)
-            session["last_triggered_time"] = time.time()
             event.stop_event()
