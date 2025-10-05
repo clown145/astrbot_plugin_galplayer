@@ -120,7 +120,7 @@ def press_key_on_window(window, key_name: str, method: str):
         time.sleep(0.05)
         win32api.PostMessage(hwnd, win32con.WM_KEYUP, key_code, lParam_up)
 
-@register("astrbot_plugin_galplayer", "随风潜入夜", "和群友一起玩Galgame", "1.0.0")
+@register("astrbot_plugin_galplayer", "随风潜入夜", "和群友一起玩Galgame", "1.0.1")
 class GalgamePlayerPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -134,7 +134,7 @@ class GalgamePlayerPlugin(Star):
         group_id = event.get_group_id()
         return f"group_{group_id}" if group_id else f"private_{event.get_sender_id()}"
     
-    async def _handle_game_action(self, event: AstrMessageEvent, session: dict, key_to_press: str = None):
+    async def _handle_game_action(self, event: AstrMessageEvent, session: dict, key_to_press: str = None, take_screenshot: bool = True):
         try:
             window = session.get("window")
             if not window or not window.visible:
@@ -143,12 +143,15 @@ class GalgamePlayerPlugin(Star):
             if key_to_press:
                 input_method = self.config.get("input_method", "PostMessage")
                 await asyncio.to_thread(press_key_on_window, window, key_to_press, input_method)
-                delay = self.config.get("screenshot_delay_seconds", 0.5)
-                await asyncio.sleep(delay)
+            
+            if take_screenshot:
+                if key_to_press:
+                    delay = self.config.get("screenshot_delay_seconds", 0.5)
+                    await asyncio.sleep(delay)
 
-            save_path_str = str(session['save_path'])
-            await asyncio.to_thread(screenshot_window, window, save_path_str)
-            await event.send(event.image_result(save_path_str))
+                save_path_str = str(session['save_path'])
+                await asyncio.to_thread(screenshot_window, window, save_path_str)
+                await event.send(event.image_result(save_path_str))
         except Exception as e:
             logger.error(f"处理游戏动作时出错: {e}")
             await event.send(event.plain_result("游戏窗口似乎已经关闭或出现问题，游戏已自动结束。"))
@@ -225,7 +228,8 @@ class GalgamePlayerPlugin(Star):
             
             session["last_triggered_time"] = current_time
             
-            await self._handle_game_action(event, session, key_to_press=actual_key_name)
+            should_screenshot = self.config.get("screenshot_on_type", True)
+            await self._handle_game_action(event, session, key_to_press=actual_key_name, take_screenshot=should_screenshot)
         else:
             await event.send(event.plain_result("当前没有正在进行的游戏。"))
         event.stop_event()
