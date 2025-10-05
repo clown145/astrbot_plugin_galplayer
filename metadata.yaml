@@ -1,5 +1,5 @@
 name: astrbot_plugin_galplayer
 author: 随风潜入夜
 description: 一个可以让你和群友一起推galgame的插件，需要在windows电脑上运行galgame本体。
-version: 1.0.0
+version: 1.0.1
 repo: "https://github.com/clown145/astrbot_plugin_galplayer"
