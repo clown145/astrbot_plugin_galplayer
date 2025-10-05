@@ -22,5 +22,10 @@
     "description": "发送 'g' 或 'gal' 时模拟按下的按键。",
     "type": "string",
     "default": "enter"
+  },
+  "screenshot_on_type": {
+    "description": "在使用 /gal type (或 /gal 输) 指令后是否自动发送截图。",
+    "type": "bool",
+    "default": true
   }
 }
