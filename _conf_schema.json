@@ -24,6 +24,11 @@
       }
     }
   },
+  "remote_secret_token": {
+    "description": "【重要】远程模式的连接密钥。客户端和服务端必须填写完全相同的值才能连接。",
+    "type": "string",
+    "default": ""
+  },
   "input_method": {
     "description": "选择按键输入模式。SendInput兼容性最强但需要游戏在前台；PostMessage可后台但对部分游戏无效。",
     "type": "string",
