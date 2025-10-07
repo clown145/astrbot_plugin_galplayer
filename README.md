@@ -50,7 +50,7 @@
 
 你需要一个客户端脚本来连接你的AstrBot。
 
-1.  **准备文件**：在你的游戏电脑上，创建一个新文件夹（例如 `gal_client`），然后将插件目录中的 `remote_client.py` 和它专用的 `requirements.txt` 两个文件放进去。
+1.  **准备文件**：在你的游戏电脑上，创建一个新文件夹（例如 `gal_client`），然后将插件目录remote文件夹中的 `remote_client.py` 和它专用的 `requirements.txt` 两个文件放进去。
 2.  **安装依赖**：在此文件夹中打开命令行/终端，运行 `pip install -r requirements.txt` 来安装客户端所需的库。
 3.  **生成配置**：运行一次客户端脚本：`python remote_client.py`。脚本会自动创建一个 `gal_client_config.ini` 文件，然后退出。
 4.  **修改配置**：打开 `gal_client_config.ini` 文件：
@@ -117,4 +117,5 @@
 
 **Q: 游戏可以最小化吗？**
 **A:** 不可以。无论在哪种模式下，游戏窗口都必须处于打开状态（不能最小化），但可以使用 `PostMessage` 模式让它被其他窗口遮挡。
+
 
