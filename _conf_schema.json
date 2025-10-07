@@ -1,4 +1,29 @@
 {
+  "mode": {
+    "description": "选择运行模式。local模式直接控制本机；remote模式通过网络控制另一台电脑。",
+    "type": "string",
+    "default": "local",
+    "options": [
+      "local",
+      "remote"
+    ]
+  },
+  "remote_server": {
+    "description": "远程模式下的服务器设置 (插件作为服务器)。",
+    "type": "object",
+    "items": {
+      "host": {
+        "description": "服务器监听的主机地址。填写 '0.0.0.0' 以允许任何设备连接。",
+        "type": "string",
+        "default": "0.0.0.0"
+      },
+      "port": {
+        "description": "服务器监听的端口。",
+        "type": "int",
+        "default": 8765
+      }
+    }
+  },
   "input_method": {
     "description": "选择按键输入模式。SendInput兼容性最强但需要游戏在前台；PostMessage可后台但对部分游戏无效。",
     "type": "string",
