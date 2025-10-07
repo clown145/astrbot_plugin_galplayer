@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import websockets
@@ -7,14 +6,31 @@ import uuid
 from astrbot.api import logger
 
 class RemoteControlServer:
-    def __init__(self, host, port):
+    def __init__(self, host, port, secret_token: str):
         self.host = host
         self.port = port
+        self.secret_token = secret_token
         self.server = None
         self.client = None
         self.pending_screenshots = {}
 
     async def _handler(self, websocket):
+        try:
+            auth_message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+            auth_data = json.loads(auth_message)
+            
+            if auth_data.get("type") == "auth" and auth_data.get("token") == self.secret_token:
+                logger.info(f"客户端 {websocket.remote_address} 验证成功。")
+                await websocket.send(json.dumps({"status": "auth_success"}))
+            else:
+                logger.warning(f"客户端 {websocket.remote_address} 验证失败：密钥不匹配。")
+                await websocket.close()
+                return
+        except Exception as e:
+            logger.warning(f"与客户端 {websocket.remote_address} 的认证过程中断: {e}")
+            await websocket.close()
+            return
+
         logger.info(f"远程客户端已连接: {websocket.remote_address}")
         self.client = websocket
         try:
@@ -60,15 +76,22 @@ class RemoteControlServer:
         except websockets.exceptions.ConnectionClosed:
             raise ConnectionError("远程客户端连接已断开。")
 
-    async def remote_find_window(self, window_title: str):
-        await self._send_command({"action": "find_window", "title": window_title})
+    async def remote_start_session(self, session_id: str, window_title: str):
+        """通知客户端为一个新的会话查找并绑定窗口"""
+        await self._send_command({"action": "start_session", "session_id": session_id, "title": window_title})
 
-    async def remote_press_key(self, key_name: str, method: str):
-        await self._send_command({"action": "press_key", "key": key_name, "method": method})
+    async def remote_stop_session(self, session_id: str):
+        """通知客户端结束一个会话，释放资源"""
+        await self._send_command({"action": "stop_session", "session_id": session_id})
 
-    async def remote_screenshot(self, save_path: str, delay: float):
+    async def remote_press_key(self, session_id: str, key_name: str, method: str):
+        """向指定会话的窗口按键"""
+        await self._send_command({"action": "press_key", "session_id": session_id, "key": key_name, "method": method})
+
+    async def remote_screenshot(self, session_id: str, save_path: str, delay: float):
+        """对指定会话的窗口截图"""
         request_id = str(uuid.uuid4())
-        command = {"action": "screenshot", "request_id": request_id, "delay": delay}
+        command = {"action": "screenshot", "session_id": session_id, "request_id": request_id, "delay": delay}
         
         loop = asyncio.get_running_loop()
         future = loop.create_future()
