@@ -1,3 +1,7 @@
-pygetwindow
-pywin32
+# 跨平台库，所有系统都需要
+websockets
 Pillow
+
+# 仅在Windows系统上安装的库
+pypiwin32; sys_platform == 'win32'
+PyGetWindow; sys_platform == 'win32'
