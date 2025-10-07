@@ -20,7 +20,7 @@ try:
 except ImportError:
     pass # 如果失败，REMOTE_SUPPORT将保持为False
 
-@register("astrbot_plugin_galplayer", "随风潜入夜", "和群友一起玩Galgame", "1.0.6")
+@register("astrbot_plugin_galplayer", "随风潜入夜", "和群友一起玩Galgame", "1.1.0")
 class GalgamePlayerPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -225,3 +225,4 @@ class GalgamePlayerPlugin(Star):
             quick_key = self.config.get("quick_advance_key", "space")
             await self._handle_game_action(event, session, key_to_press=quick_key)
             event.stop_event()
+
