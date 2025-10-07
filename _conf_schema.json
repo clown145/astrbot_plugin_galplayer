@@ -1,6 +1,6 @@
 {
   "mode": {
-    "description": "选择运行模式。local模式直接控制本机；remote模式通过网络控制另一台电脑。",
+    "description": "选择运行模式。local模式直接控制本机(仅支持Windows)；remote模式通过网络控制另一台电脑。",
     "type": "string",
     "default": "local",
     "options": [
