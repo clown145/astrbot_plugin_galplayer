@@ -9,16 +9,14 @@ from astrbot.api.star import Context, Star, register
 
 IS_WINDOWS = sys.platform == 'win32'
 
-# 初始化占位符，确保变量在任何情况下都存在
 local_operations = None
 REMOTE_SUPPORT = False
 
-# 安全地尝试导入远程API模块
 try:
     from .api import RemoteControlServer
     REMOTE_SUPPORT = True
 except ImportError:
-    pass # 如果失败，REMOTE_SUPPORT将保持为False
+    pass
 
 @register("astrbot_plugin_galplayer", "随风潜入夜", "和群友一起玩Galgame", "1.1.0")
 class GalgamePlayerPlugin(Star):
@@ -37,7 +35,6 @@ class GalgamePlayerPlugin(Star):
                 self.local_mode_available = True
             except ImportError as e:
                 logger.critical(f"当前是Windows系统，但无法加载本地操作模块。请检查依赖。错误: {e}")
-                self.local_mode_available = False
         
         self.mode = self.config.get("mode", "local")
 
@@ -55,11 +52,16 @@ class GalgamePlayerPlugin(Star):
                 logger.error("远程模式需要 'websockets' 库，但无法导入。插件功能将被禁用。")
                 self.mode = "disabled"
             else:
-                server_config = self.config.get("remote_server", {})
-                host = server_config.get("host", "0.0.0.0")
-                port = server_config.get("port", 8765)
-                self.remote_server = RemoteControlServer(host, port)
-                asyncio.create_task(self.remote_server.start())
+                secret_token = self.config.get("remote_secret_token")
+                if not secret_token:
+                    logger.error("远程模式已启用，但未在配置中设置 'remote_secret_token'。插件功能将被禁用。")
+                    self.mode = "disabled"
+                else:
+                    server_config = self.config.get("remote_server", {})
+                    host = server_config.get("host", "0.0.0.0")
+                    port = server_config.get("port", 8765)
+                    self.remote_server = RemoteControlServer(host, port, secret_token)
+                    asyncio.create_task(self.remote_server.start())
         
         logger.info(f"Galgame 插件已加载。运行模式: {self.mode.upper()}")
 
@@ -73,8 +75,9 @@ class GalgamePlayerPlugin(Star):
         return f"group_{group_id}" if group_id else f"private_{event.get_sender_id()}"
     
     async def _handle_game_action(self, event: AstrMessageEvent, session: dict, key_to_press: str = None, take_screenshot: bool = True):
+        session_id = self.get_session_id(event)
         if self.mode == "remote":
-            await self._handle_remote_action(event, session, key_to_press, take_screenshot)
+            await self._handle_remote_action(event, session, session_id, key_to_press, take_screenshot)
         elif self.mode == "local" and self.local_mode_available:
             await self._handle_local_action(event, session, key_to_press, take_screenshot)
         else:
@@ -100,24 +103,27 @@ class GalgamePlayerPlugin(Star):
             if (session_id := self.get_session_id(event)) in self.game_sessions:
                 del self.game_sessions[session_id]
 
-    async def _handle_remote_action(self, event: AstrMessageEvent, session: dict, key_to_press: str, take_screenshot: bool):
+    async def _handle_remote_action(self, event: AstrMessageEvent, session: dict, session_id: str, key_to_press: str, take_screenshot: bool):
         if not self.remote_server:
             await event.send(event.plain_result("错误：远程服务器未初始化。"))
             return
         try:
             if key_to_press:
                 input_method = self.config.get("input_method", "PostMessage")
-                await self.remote_server.remote_press_key(key_to_press, input_method)
+                await self.remote_server.remote_press_key(session_id, key_to_press, input_method)
             if take_screenshot:
                 delay = self.config.get("screenshot_delay_seconds", 0.5) if key_to_press else 0
                 save_path_str = str(session['save_path'])
-                await self.remote_server.remote_screenshot(save_path_str, delay)
+                await self.remote_server.remote_screenshot(session_id, save_path_str, delay)
                 await event.send(event.image_result(save_path_str))
         except ConnectionError:
             await event.send(event.plain_result("远程客户端未连接。请确保远程脚本正在运行并已连接。"))
         except Exception as e:
             logger.error(f"处理远程游戏动作时出错: {e}")
             await event.send(event.plain_result(f"远程操作失败: {e}"))
+            # 如果远程操作失败，也清理会话
+            if (sid := self.get_session_id(event)) in self.game_sessions:
+                del self.game_sessions[sid]
 
     @filter.command_group("gal", alias={"g"})
     async def gal_group(self): ...
@@ -128,20 +134,23 @@ class GalgamePlayerPlugin(Star):
         if session_id in self.game_sessions:
             yield event.plain_result("本群聊已在游戏中！请先用 /gal stop 停止。")
             return
+        
         save_path = self.temp_img_dir / f"{session_id}.png"
+
         if self.mode == "remote":
             if not self.remote_server or not self.remote_server.client:
                 yield event.plain_result("远程客户端未连接。请在远程电脑上运行客户端脚本。")
                 return
             yield event.plain_result(f"正在通知远程客户端查找窗口: '{window_title}'...")
             try:
-                await self.remote_server.remote_find_window(window_title)
+                await self.remote_server.remote_start_session(session_id, window_title)
                 self.game_sessions[session_id] = {"window_title": window_title, "last_triggered_time": 0.0, "save_path": save_path}
                 logger.info(f"会话 {session_id} 开始远程游戏，窗口: {window_title}")
                 yield event.plain_result("远程游戏开始！正在获取当前画面：")
-                await self._handle_remote_action(event, self.game_sessions[session_id], key_to_press=None, take_screenshot=True)
+                await self._handle_remote_action(event, self.game_sessions[session_id], session_id, key_to_press=None, take_screenshot=True)
             except Exception as e:
                 yield event.plain_result(f"启动远程游戏失败: {e}")
+
         elif self.mode == "local" and self.local_mode_available:
             yield event.plain_result(f"正在查找本地窗口: '{window_title}'...")
             window = await asyncio.to_thread(local_operations.find_game_window, window_title)
@@ -160,6 +169,9 @@ class GalgamePlayerPlugin(Star):
     async def stop_game(self, event: AstrMessageEvent):
         session_id = self.get_session_id(event)
         if session_id in self.game_sessions:
+            if self.mode == "remote" and self.remote_server and self.remote_server.client:
+                await self.remote_server.remote_stop_session(session_id) # 通知客户端清理
+            
             if (save_path := self.game_sessions[session_id]['save_path']).exists():
                 save_path.unlink()
             del self.game_sessions[session_id]
@@ -225,4 +237,3 @@ class GalgamePlayerPlugin(Star):
             quick_key = self.config.get("quick_advance_key", "space")
             await self._handle_game_action(event, session, key_to_press=quick_key)
             event.stop_event()
-
