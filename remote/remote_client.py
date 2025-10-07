@@ -1,3 +1,5 @@
+# --- START OF FILE remote_client.py ---
+
 import asyncio
 import websockets
 import json
@@ -13,6 +15,40 @@ from PIL import Image
 import base64
 from io import BytesIO
 import logging
+import configparser
+from pathlib import Path
+
+CONFIG_FILE = Path("gal_client_config.ini")
+
+def create_default_config():
+    """如果配置文件不存在，则创建一个默认的"""
+    config = configparser.ConfigParser()
+    config['Connection'] = {
+        'ServerURI': 'ws://localhost:8765',
+        'SecretToken': 'YOUR_SECRET_TOKEN_HERE'
+    }
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as configfile:
+        config.write(configfile)
+    logger.info(f"已创建默认配置文件: {CONFIG_FILE}")
+    logger.info("请修改配置文件中的 ServerURI 和 SecretToken 后再重新运行脚本。")
+
+def load_config():
+    """加载配置"""
+    if not CONFIG_FILE.exists():
+        create_default_config()
+        return None
+    
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE, encoding='utf-8')
+    return config
+
+config = load_config()
+if not config:
+    exit()
+
+SERVER_URI = config.get('Connection', 'ServerURI', fallback='ws://localhost:8765')
+SECRET_TOKEN = config.get('Connection', 'SecretToken', fallback='')
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -30,35 +66,38 @@ class INPUT(ctypes.Structure):
     _anonymous_ = ("_input",)
     _fields_ = (("type", wintypes.DWORD), ("_input", _INPUT))
 
-game_window = None
 
-def find_game_window(window_title: str):
-    global game_window
+active_windows = {} # key: session_id, value: window object
+
+def find_and_store_window(session_id: str, window_title: str):
+    """为指定 session_id 查找并存储窗口对象"""
+    global active_windows
     try:
         windows = gw.getWindowsWithTitle(window_title)
         if windows:
-            game_window = windows[0]
-            logger.info(f"成功找到窗口: '{game_window.title}'")
+            window = windows[0]
+            active_windows[session_id] = window
+            logger.info(f"会话 [{session_id}] 成功绑定窗口: '{window.title}'")
             return True
         else:
-            game_window = None
-            logger.error(f"找不到窗口 '{window_title}'")
+            logger.error(f"会话 [{session_id}] 找不到窗口 '{window_title}'")
+            if session_id in active_windows:
+                del active_windows[session_id]
             return False
     except Exception as e:
-        logger.error(f"查找窗口时出错: {e}")
-        game_window = None
+        logger.error(f"会话 [{session_id}] 查找窗口时出错: {e}")
+        if session_id in active_windows:
+            del active_windows[session_id]
         return False
 
 def screenshot_window(window):
     hwnd = window._hWnd
-
-    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-    time.sleep(0.2)
-
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        time.sleep(0.2)
     left, top, right, bot = win32gui.GetWindowRect(hwnd)
     width, height = right - left, bot - top
     if width <= 0 or height <= 0: raise ValueError("窗口尺寸无效，无法截图。")
-
     hwnd_dc = win32gui.GetWindowDC(hwnd)
     mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
     save_dc = mfc_dc.CreateCompatibleDC()
@@ -69,7 +108,6 @@ def screenshot_window(window):
         ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 3)
         bmp_str = save_bitmap.GetBitmapBits(True)
         im = Image.frombuffer('RGB', (width, height), bmp_str, 'raw', 'BGRX', 0, 1)
-        
         buffered = BytesIO()
         im.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
@@ -109,52 +147,90 @@ def press_key_on_window(window, key_name: str, method: str):
         time.sleep(0.05)
         win32api.PostMessage(hwnd, win32con.WM_KEYUP, key_code, lParam_up)
 
+
 async def send_json(websocket, data):
     await websocket.send(json.dumps(data))
 
 async def handle_command(websocket, command):
-    global game_window
+    global active_windows
     action = command.get("action")
-    logger.info(f"收到指令: {action}")
+    session_id = command.get("session_id")
+
+    if not session_id:
+        logger.warning(f"收到缺少 session_id 的指令: {action}")
+        return
+
+    logger.info(f"收到会话 [{session_id}] 的指令: {action}")
+    
     try:
-        if action == "find_window":
-            find_game_window(command.get("title"))
-        elif action in ["press_key", "screenshot"]:
-            if not game_window or not game_window.visible:
-                raise Exception("游戏窗口未找到或已关闭。")
+        if action == "start_session":
+            find_and_store_window(session_id, command.get("title"))
+            return
+        
+        if action == "stop_session":
+            if session_id in active_windows:
+                del active_windows[session_id]
+                logger.info(f"会话 [{session_id}] 已结束。")
+            return
+
+        game_window = active_windows.get(session_id)
+        if not game_window or not game_window.visible:
+            raise Exception(f"会话 [{session_id}] 的游戏窗口未找到或已关闭。")
+        
+        if action == "press_key":
+            press_key_on_window(game_window, command.get("key"), command.get("method"))
+        
+        elif action == "screenshot":
+            request_id = command.get("request_id")
+            if not request_id: return
             
-            if action == "press_key":
-                press_key_on_window(game_window, command.get("key"), command.get("method"))
+            delay = command.get("delay", 0)
+            if delay > 0: await asyncio.sleep(delay)
             
-            elif action == "screenshot":
-                request_id = command.get("request_id")
-                if not request_id: return
-                delay = command.get("delay", 0)
-                if delay > 0: await asyncio.sleep(delay)
-                img_b64 = screenshot_window(game_window)
-                await send_json(websocket, {"request_id": request_id, "status": "success", "image_data": img_b64})
+            img_b64 = screenshot_window(game_window)
+            await send_json(websocket, {"request_id": request_id, "status": "success", "image_data": img_b64})
+
     except Exception as e:
-        logger.error(f"处理指令 '{action}' 时出错: {e}")
+        logger.error(f"处理会话 [{session_id}] 指令 '{action}' 时出错: {e}")
         if action == "screenshot" and "request_id" in command:
             await send_json(websocket, {"request_id": command["request_id"], "status": "error", "error": str(e)})
 
 async def client_handler(uri):
+    if not SECRET_TOKEN or SECRET_TOKEN == "YOUR_SECRET_TOKEN_HERE":
+        logger.error("错误：请在配置文件 gal_client_config.ini 中设置 SecretToken！")
+        return
+
     ten_mb = 10 * 1024 * 1024
     while True:
         try:
             async with websockets.connect(uri, max_size=ten_mb) as websocket:
-                logger.info(f"已成功连接到服务器: {uri}")
+                logger.info(f"已连接到服务器 {uri}，正在发送验证信息...")
+                auth_payload = {"type": "auth", "token": SECRET_TOKEN}
+                await websocket.send(json.dumps(auth_payload))
+                
+                response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                response_data = json.loads(response)
+                
+                if response_data.get("status") != "auth_success":
+                    raise ConnectionRefusedError("服务器验证失败，请检查Token是否一致。")
+                
+                logger.info("服务器验证成功，连接已建立。")
+
                 async for message in websocket:
                     try:
                         command = json.loads(message)
                         asyncio.create_task(handle_command(websocket, command))
                     except json.JSONDecodeError:
                         logger.error(f"收到无法解析的消息: {message}")
-        except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError) as e:
+        except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError, asyncio.TimeoutError) as e:
             logger.error(f"连接失败或中断: {e}. 5秒后重试...")
+            active_windows.clear() # 连接断开时，清空所有会话
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"发生未知错误: {e}. 5秒后重试...")
+            active_windows.clear()
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
-    SERVER_URI = "ws://localhost:8765" # 记得修改为插件主机的IP
     logger.info(f"正在尝试连接到 {SERVER_URI}...")
     asyncio.run(client_handler(SERVER_URI))
