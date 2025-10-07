@@ -9,16 +9,18 @@ from astrbot.api.star import Context, Star, register
 
 IS_WINDOWS = sys.platform == 'win32'
 
-if IS_WINDOWS:
-    local_operations = None
-    
+# 初始化占位符，确保变量在任何情况下都存在
+local_operations = None
+REMOTE_SUPPORT = False
+
+# 安全地尝试导入远程API模块
 try:
     from .api import RemoteControlServer
     REMOTE_SUPPORT = True
 except ImportError:
-    REMOTE_SUPPORT = False
+    pass # 如果失败，REMOTE_SUPPORT将保持为False
 
-@register("astrbot_plugin_galplayer", "随风潜入夜", "和群友一起玩Galgame", "1.0.4")
+@register("astrbot_plugin_galplayer", "随风潜入夜", "和群友一起玩Galgame", "1.0.6")
 class GalgamePlayerPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -26,28 +28,31 @@ class GalgamePlayerPlugin(Star):
         self.game_sessions = {}
         self.temp_img_dir = Path("data") / "tmp" / "galplayer"
         self.temp_img_dir.mkdir(parents=True, exist_ok=True)
-
+        
         self.local_mode_available = False
         if IS_WINDOWS:
             try:
                 from . import local_operations as lo
                 globals()['local_operations'] = lo
                 self.local_mode_available = True
-                logger.info("Windows系统检测成功，本地操作模块已加载。")
             except ImportError as e:
-                logger.critical(f"当前是Windows系统，但无法加载本地操作模块，本地模式不可用。请在AstrBot环境内检查依赖。具体错误: {e}")
+                logger.critical(f"当前是Windows系统，但无法加载本地操作模块。请检查依赖。错误: {e}")
                 self.local_mode_available = False
-
+        
         self.mode = self.config.get("mode", "local")
+
+        if self.mode == "local":
+            if not IS_WINDOWS:
+                logger.info("当前系统非Windows，自动切换到远程模式。")
+                self.mode = "remote"
+            elif not self.local_mode_available:
+                logger.warning("配置为本地模式，但本地模块加载失败。将强制切换到远程模式。")
+                self.mode = "remote"
+    
         self.remote_server = None
-
-        if self.mode == "local" and not self.local_mode_available:
-            logger.warning("配置为本地模式，但本地操作模块不可用。将强制切换到远程模式。")
-            self.mode = "remote"
-
         if self.mode == "remote":
             if not REMOTE_SUPPORT:
-                logger.error("远程模式需要 'websockets' 库，但无法导入api.py。插件功能将受限。")
+                logger.error("远程模式需要 'websockets' 库，但无法导入。插件功能将被禁用。")
                 self.mode = "disabled"
             else:
                 server_config = self.config.get("remote_server", {})
@@ -80,11 +85,9 @@ class GalgamePlayerPlugin(Star):
             window = session.get("window")
             if not window or not window.visible:
                 raise Exception("游戏窗口不可见或已关闭。")
-            
             if key_to_press:
                 input_method = self.config.get("input_method", "PostMessage")
                 await asyncio.to_thread(local_operations.press_key_on_window, window, key_to_press, input_method)
-            
             if take_screenshot:
                 if key_to_press:
                     await asyncio.sleep(self.config.get("screenshot_delay_seconds", 0.5))
@@ -105,7 +108,6 @@ class GalgamePlayerPlugin(Star):
             if key_to_press:
                 input_method = self.config.get("input_method", "PostMessage")
                 await self.remote_server.remote_press_key(key_to_press, input_method)
-            
             if take_screenshot:
                 delay = self.config.get("screenshot_delay_seconds", 0.5) if key_to_press else 0
                 save_path_str = str(session['save_path'])
@@ -126,9 +128,7 @@ class GalgamePlayerPlugin(Star):
         if session_id in self.game_sessions:
             yield event.plain_result("本群聊已在游戏中！请先用 /gal stop 停止。")
             return
-
         save_path = self.temp_img_dir / f"{session_id}.png"
-        
         if self.mode == "remote":
             if not self.remote_server or not self.remote_server.client:
                 yield event.plain_result("远程客户端未连接。请在远程电脑上运行客户端脚本。")
@@ -154,7 +154,6 @@ class GalgamePlayerPlugin(Star):
             await self._handle_local_action(event, self.game_sessions[session_id], key_to_press=None, take_screenshot=True)
         else:
             yield event.plain_result(f"插件当前模式 ({self.mode}) 无法启动游戏。请检查配置和运行环境。")
-
         event.stop_event()
 
     @gal_group.command("stop", alias={"停止游戏"})
