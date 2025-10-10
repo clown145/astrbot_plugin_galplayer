@@ -85,3 +85,36 @@ def press_key_on_window(window, key_name: str, method: str):
         win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, key_code, lParam_down)
         time.sleep(0.05)
         win32api.PostMessage(hwnd, win32con.WM_KEYUP, key_code, lParam_up)
+
+def click_window(window, rel_x: float, rel_y: float):
+    """在窗口上模拟鼠标左键点击，rel_x/rel_y 为相对坐标"""
+    hwnd = window._hWnd
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        time.sleep(0.2)
+    if not window.isActive:
+        try:
+            window.activate()
+            time.sleep(0.05)
+        except Exception:
+            pass
+
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    width, height = right - left, bottom - top
+    if width <= 0 or height <= 0:
+        raise ValueError("窗口尺寸无效，无法点击。")
+
+    rel_x = max(0.0, min(1.0, rel_x))
+    rel_y = max(0.0, min(1.0, rel_y))
+    target_x = int(left + rel_x * width)
+    target_y = int(top + rel_y * height)
+
+    client_x, client_y = win32gui.ScreenToClient(hwnd, (target_x, target_y))
+    client_x = max(0, min(0xFFFF, client_x))
+    client_y = max(0, min(0xFFFF, client_y))
+    lparam = win32api.MAKELONG(client_x, client_y)
+
+    win32api.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+    time.sleep(0.05)
+    win32api.PostMessage(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+

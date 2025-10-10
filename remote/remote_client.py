@@ -148,6 +148,38 @@ def press_key_on_window(window, key_name: str, method: str):
         win32api.PostMessage(hwnd, win32con.WM_KEYUP, key_code, lParam_up)
 
 
+def click_window(window, rel_x: float, rel_y: float):
+    hwnd = window._hWnd
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        time.sleep(0.2)
+    if not window.isActive:
+        try:
+            window.activate()
+            time.sleep(0.05)
+        except Exception:
+            pass
+
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    width, height = right - left, bottom - top
+    if width <= 0 or height <= 0:
+        raise ValueError("窗口尺寸无效，无法点击。")
+
+    rel_x = max(0.0, min(1.0, rel_x))
+    rel_y = max(0.0, min(1.0, rel_y))
+    target_x = int(left + rel_x * width)
+    target_y = int(top + rel_y * height)
+
+    client_x, client_y = win32gui.ScreenToClient(hwnd, (target_x, target_y))
+    client_x = max(0, min(0xFFFF, client_x))
+    client_y = max(0, min(0xFFFF, client_y))
+    lparam = win32api.MAKELONG(client_x, client_y)
+
+    win32api.PostMessage(hwnd, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lparam)
+    time.sleep(0.05)
+    win32api.PostMessage(hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+
+
 async def send_json(websocket, data):
     await websocket.send(json.dumps(data))
 
@@ -179,7 +211,14 @@ async def handle_command(websocket, command):
         
         if action == "press_key":
             press_key_on_window(game_window, command.get("key"), command.get("method"))
-        
+
+        elif action == "click":
+            rel_x = command.get("x")
+            rel_y = command.get("y")
+            if rel_x is None or rel_y is None:
+                return
+            click_window(game_window, float(rel_x), float(rel_y))
+
         elif action == "screenshot":
             request_id = command.get("request_id")
             if not request_id: return
