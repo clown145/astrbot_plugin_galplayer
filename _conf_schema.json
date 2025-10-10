@@ -53,6 +53,16 @@
     "type": "string",
     "default": "enter"
   },
+  "registration_timeout_seconds": {
+    "description": "按钮注册流程等待用户响应的超时时间（秒）。",
+    "type": "float",
+    "default": 60.0
+  },
+  "screenshot_on_click": {
+    "description": "使用 /点 指令或注册流程执行点击后是否自动发送最新截图。",
+    "type": "bool",
+    "default": true
+  },
   "screenshot_on_type": {
     "description": "在使用 /gal type (或 /gal 输) 指令后是否自动发送截图。",
     "type": "bool",

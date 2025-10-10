@@ -148,6 +148,60 @@ def press_key_on_window(window, key_name: str, method: str):
         win32api.PostMessage(hwnd, win32con.WM_KEYUP, key_code, lParam_up)
 
 
+def get_window_metrics(window):
+    hwnd = window._hWnd
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    client_left, client_top = win32gui.ClientToScreen(hwnd, (0, 0))
+    client_rect = win32gui.GetClientRect(hwnd)
+    return {
+        "hwnd": hwnd,
+        "window_width": max(right - left, 0),
+        "window_height": max(bottom - top, 0),
+        "border_left": client_left - left,
+        "border_top": client_top - top,
+        "client_width": max(client_rect[2] - client_rect[0], 0),
+        "client_height": max(client_rect[3] - client_rect[1], 0),
+        "screen_left": left,
+        "screen_top": top,
+    }
+
+
+def click_window_by_ratio(window, x_ratio: float, y_ratio: float, method: str):
+    metrics = get_window_metrics(window)
+    if metrics["window_width"] <= 0 or metrics["window_height"] <= 0:
+        raise ValueError("窗口尺寸无效，无法执行点击。")
+
+    x_ratio = max(0.0, min(1.0, x_ratio))
+    y_ratio = max(0.0, min(1.0, y_ratio))
+
+    click_x_window = int(round(x_ratio * (metrics["window_width"] - 1)))
+    click_y_window = int(round(y_ratio * (metrics["window_height"] - 1)))
+    client_x = click_x_window - metrics["border_left"]
+    client_y = click_y_window - metrics["border_top"]
+
+    client_x = max(0, min(metrics["client_width"] - 1, client_x))
+    client_y = max(0, min(metrics["client_height"] - 1, client_y))
+
+    if method == "SendInput":
+        screen_x = metrics["screen_left"] + metrics["border_left"] + client_x
+        screen_y = metrics["screen_top"] + metrics["border_top"] + client_y
+        if not window.isActive:
+            try:
+                window.activate()
+                time.sleep(0.05)
+            except Exception:
+                pass
+        win32api.SetCursorPos((screen_x, screen_y))
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        time.sleep(0.02)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    else:
+        l_param = (client_y << 16) | (client_x & 0xFFFF)
+        win32api.PostMessage(metrics["hwnd"], win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, l_param)
+        time.sleep(0.02)
+        win32api.PostMessage(metrics["hwnd"], win32con.WM_LBUTTONUP, 0, l_param)
+
+
 async def send_json(websocket, data):
     await websocket.send(json.dumps(data))
 
@@ -179,6 +233,14 @@ async def handle_command(websocket, command):
         
         if action == "press_key":
             press_key_on_window(game_window, command.get("key"), command.get("method"))
+        
+        elif action == "click":
+            x_ratio = command.get("x_ratio")
+            y_ratio = command.get("y_ratio")
+            if x_ratio is None or y_ratio is None:
+                logger.error(f"会话 [{session_id}] 的点击指令缺少坐标。")
+            else:
+                click_window_by_ratio(game_window, float(x_ratio), float(y_ratio), command.get("method", "PostMessage"))
         
         elif action == "screenshot":
             request_id = command.get("request_id")

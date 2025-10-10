@@ -88,6 +88,18 @@ class RemoteControlServer:
         """向指定会话的窗口按键"""
         await self._send_command({"action": "press_key", "session_id": session_id, "key": key_name, "method": method})
 
+    async def remote_click(self, session_id: str, x_ratio: float, y_ratio: float, method: str):
+        """在指定会话的窗口执行一次鼠标左键点击"""
+        await self._send_command(
+            {
+                "action": "click",
+                "session_id": session_id,
+                "x_ratio": x_ratio,
+                "y_ratio": y_ratio,
+                "method": method,
+            }
+        )
+
     async def remote_screenshot(self, session_id: str, save_path: str, delay: float):
         """对指定会话的窗口截图"""
         request_id = str(uuid.uuid4())

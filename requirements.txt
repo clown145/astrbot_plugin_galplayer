@@ -1,6 +1,7 @@
-# 跨平台库，所有系统都需要
+﻿# 跨平台库，所有系统都需要
 websockets
 Pillow
+opencv-python>=4.9.0.0
 
 # 仅在Windows系统上安装的库
 pypiwin32; sys_platform == 'win32'
