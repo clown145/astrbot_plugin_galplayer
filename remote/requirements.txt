@@ -2,3 +2,4 @@ Pillow
 pygetwindow
 pywin32
 websockets
+dxcam; sys_platform == 'win32'

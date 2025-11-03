@@ -1,11 +1,16 @@
 
-# 🎮 AstrBot Galgame 同乐插件 v1.2.0
+# 🎮 AstrBot Galgame 同乐插件 v1.3.0
 
 你是否曾想过和群友们一起在聊天群里玩 Galgame 或视觉小说？这个插件将这个想法变为了现实！
 
 本插件能够捕捉你电脑上指定的游戏窗口画面，通过截图的方式实时“直播”到聊天群里。群里的每一个人都可以通过简单的指令来控制游戏（例如推进对话、进行选择），实现云玩 Galgame 的有趣体验。
 
 ## 注意：小心HCG
+
+## ✨ v1.3.0 版本更新说明
+
+*   **新增“戳一戳”快捷推进**：现在，你可以通过戳一戳机器人来代替发送“g”指令，操作更加便捷！此功能默认开启，可以在配置中关闭。
+*   **优化截图机制**：引入 `dxcam` 作为可选的截图后端，可以有效避免在部分游戏中（尤其是在前台模式下）截图丢失UI的问题，让游戏画面更完整。
 
 ## ✨ v1.2.0 版本更新说明
 
@@ -119,11 +124,15 @@
 | `remote_server` | `对象` | `...` | 远程模式下服务器的监听地址和端口。通常保持默认。 |
 | `remote_secret_token`| `字符串` | `""` | **远程模式连接密钥**。必须与客户端配置文件中的 `SecretToken` 一致。 |
 | **`input_method`** | `下拉选择` | `SendInput` | **最重要的配置！** 选择按键的输入模式。<br>- **`SendInput`**: 前台模式，兼容性最强，但游戏窗口必须是当前活动窗口。<br>- **`PostMessage`**: 后台模式，兼容性较差。 |
+| `foreground_use_dxcam` | `布尔` | `true` | 仅在前台模式（`input_method=SendInput`）下生效。开启后使用 dxcam 进行截图（本地与远程均适用），能避免部分游戏 UI 丢失；关闭则使用原有 PrintWindow 截图。后台模式（`PostMessage`）不受影响。远程模式在 dxcam 下会使用 JPEG 传输（更快更稳），本地保持 PNG。 |
 | `cooldown_seconds` | `浮点数` | `3.0` | 两次指令之间的最小时间间隔（秒），用于防止刷屏。 |
 | `screenshot_delay_seconds`| `浮点数` | `1.0` | 按键后等待多久再截图（秒）。如果游戏动画较慢，可以适当调高此值。 |
+| `remote_use_jpeg` | `布尔` | `false` | 远程模式下是否使用 JPEG 编码（更小更快）。关闭则使用 PNG。 |
+| `background_use_dxcam` | `布尔` | `false` | 后台模式（`input_method=PostMessage`）截图是否使用 dxcam。开启后可在后台也尽量避免 UI 丢失；关闭则使用现有 PrintWindow 截图。 |
 | `registration_timeout_seconds` | `浮点数` | `60.0` | `/注册按钮` 流程等待用户回复的超时时间（秒）。
 | `screenshot_on_click` | `布尔` | `true` | 使用 `/点` 或注册流程点击后是否自动发送截图。
 | `quick_advance_key` | `字符串` | `enter` | 设置 `g` 或 `gal` 这条快捷指令所对应的键盘按键。 |
+| `poke_to_g` | `布尔` | `true` | **新增**。是否开启戳一戳机器人等于发送 'g' 的功能。默认开启。 |
 
 ## ❓ 疑难解答 (FAQ)
 

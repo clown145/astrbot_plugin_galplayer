@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools, register
-from astrbot.core.message.components import Image
+from astrbot.api.message_components import Image, Poke
 
 from .image_utils import ImageProcessingError, extract_click_point
 
@@ -72,7 +72,7 @@ class RegistrationState:
     temp_paths: list[Path] = field(default_factory=list)
     last_event: Optional[AstrMessageEvent] = None
 
-@register(PLUGIN_NAME, "随风潜入夜", "和群友一起推 Galgame", "1.2.0")
+@register(PLUGIN_NAME, "随风潜入夜", "和群友一起推 Galgame", "1.3.0")
 class GalgamePlayerPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -82,6 +82,10 @@ class GalgamePlayerPlugin(Star):
         self.registration_states: Dict[str, RegistrationState] = {}
         self.temp_img_dir = Path("data") / "tmp" / "galplayer"
         self.temp_img_dir.mkdir(parents=True, exist_ok=True)
+
+        # Poke to g feature
+        self.poke_to_g = self.config.get("poke_to_g", False)
+        self.last_poke_time: Dict[str, float] = {}
         
         self.local_mode_available = False
         if IS_WINDOWS:
@@ -409,7 +413,15 @@ class GalgamePlayerPlugin(Star):
                 if key_to_press:
                     await asyncio.sleep(self.config.get("screenshot_delay_seconds", 0.5))
                 save_path_str = str(session["save_path"])
-                await asyncio.to_thread(local_operations.screenshot_window, window, save_path_str)
+                input_method = self.config.get("input_method", "PostMessage")
+                use_dxcam = (
+                    (input_method == "SendInput" and bool(self.config.get("foreground_use_dxcam", True)))
+                    or (input_method == "PostMessage" and bool(self.config.get("background_use_dxcam", False)))
+                )
+                if use_dxcam and hasattr(local_operations, "screenshot_window_dxcam"):
+                    await asyncio.to_thread(local_operations.screenshot_window_dxcam, window, save_path_str, input_method == "SendInput")
+                else:
+                    await asyncio.to_thread(local_operations.screenshot_window, window, save_path_str)
                 await event.send(event.image_result(save_path_str))
         except Exception as e:
             logger.error(f"处理本地游戏动作时出错: {e}")
@@ -428,17 +440,33 @@ class GalgamePlayerPlugin(Star):
                 await self.remote_server.remote_press_key(session_id, key_to_press, input_method)
             if take_screenshot:
                 delay = self.config.get("screenshot_delay_seconds", 0.5) if key_to_press else 0
+                # 确保保存扩展名与编码格式一致（仅远程）
+                desired_ext = "jpg" if bool(self.config.get("remote_use_jpeg", False)) else "png"
+                current_path: Path = session["save_path"]
+                if current_path.suffix.lower().lstrip(".") != desired_ext:
+                    new_path = current_path.with_suffix(f".{desired_ext}")
+                    session["save_path"] = new_path
                 save_path_str = str(session["save_path"])
-                await self.remote_server.remote_screenshot(session_id, save_path_str, delay)
+                input_method = self.config.get("input_method", "PostMessage")
+                use_dxcam = (
+                    (input_method == "SendInput" and bool(self.config.get("foreground_use_dxcam", True)))
+                    or (input_method == "PostMessage" and bool(self.config.get("background_use_dxcam", False)))
+                )
+                # 是否使用 JPEG 由配置控制（仅影响远程编码格式）
+                image_format = "jpeg" if bool(self.config.get("remote_use_jpeg", False)) else "png"
+                bring_to_front = (input_method == "SendInput")
+                await self.remote_server.remote_screenshot(session_id, save_path_str, delay, use_dxcam, image_format, bring_to_front)
                 await event.send(event.image_result(save_path_str))
         except ConnectionError:
             await event.send(event.plain_result("远程客户端未连接。请确保远程脚本正在运行并已连接。"))
         except Exception as e:
+            # 某些环境下会抛出 "Timed out" 或自定义的超时提示；这类情况不再向用户报错，仅记录为警告
+            msg = str(e).strip().lower()
+            if "timed out" in msg or "超时" in msg:
+                logger.warning(f"远程截图等待超时（已忽略）：{e}")
+                return
             logger.error(f"处理远程游戏动作时出错: {e}")
-            await event.send(event.plain_result(f"远程操作失败: {e}"))
-            if (sid := self.get_session_id(event)) in self.game_sessions:
-                del self.game_sessions[sid]
-                self._clear_registration_state(sid)
+            await event.send(event.plain_result(f"远程操作失败: {e}。会话保持不变，请稍后重试 /gal resend 或继续操作。"))
     @filter.command_group("gal", alias={"g"})
     async def gal_group(self): ...
 
@@ -449,7 +477,13 @@ class GalgamePlayerPlugin(Star):
             yield event.plain_result("本群聊已在游戏中！请先用 /gal stop 停止。")
             return
         
-        save_path = self.temp_img_dir / f"{session_id}.png"
+        # 保存路径按模式/配置决定扩展名，远程可选 JPEG
+        if self.mode == "remote":
+            use_jpeg = bool(self.config.get("remote_use_jpeg", False))
+            ext = "jpg" if use_jpeg else "png"
+            save_path = self.temp_img_dir / f"{session_id}.{ext}"
+        else:
+            save_path = self.temp_img_dir / f"{session_id}.png"
 
         if self.mode == "remote":
             if not self.remote_server or not self.remote_server.client:
@@ -711,7 +745,7 @@ class GalgamePlayerPlugin(Star):
             await event.send(event.plain_result("当前没有正在进行的游戏。"))
         event.stop_event()
 
-    @gal_group.command("help", alias={"甯姪"})
+    @gal_group.command("help", alias={"帮助"})
     async def show_help(self, event: AstrMessageEvent):
         quick_key = self.config.get("quick_advance_key", "space")
         input_method = self.config.get("input_method", "PostMessage")
@@ -735,17 +769,72 @@ class GalgamePlayerPlugin(Star):
         yield event.plain_result(help_text)
         event.stop_event()
 
+    async def _handle_g_command(self, event: AstrMessageEvent):
+        """处理 'g' 或 'gal' 指令或戳一戳事件，推进游戏。"""
+        session_id = self.get_session_id(event)
+        if session_id in self.game_sessions:
+            session = self.game_sessions[session_id]
+
+            # 检查游戏动作的统一冷却时间
+            if time.time() - session.get("last_triggered_time", 0) < self.config.get("cooldown_seconds", 3.0):
+                return
+            session["last_triggered_time"] = time.time()
+
+            quick_key = self.config.get("quick_advance_key", "space")
+            await self._handle_game_action(event, session, key_to_press=quick_key)
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_poke(self, event: AstrMessageEvent):
+        """监听并响应戳一戳事件。"""
+        if not self.poke_to_g:
+            return
+
+        # 尝试从特定平台的 message_obj 中获取信息
+        message_obj = getattr(event, "message_obj", None)
+        if not message_obj:
+            return
+
+        raw_message = getattr(message_obj, "raw_message", None)
+        message_chain = getattr(message_obj, "message", None)
+
+        # 严格按照 1.py 的方式进行检查
+        if (
+            not raw_message
+            or not message_chain
+            or not isinstance(message_chain[0], Poke)
+        ):
+            return
+
+        target_id = raw_message.get("target_id")
+        user_id = raw_message.get("user_id")
+
+        if not user_id or not target_id:
+            logger.debug("Poke 事件中缺少 user_id 或 target_id")
+            return
+
+        # 检查戳的是否是Bot自己
+        if str(target_id) != event.get_self_id():
+            return
+
+        # 戳一戳冷却
+        sender_id_str = str(user_id)
+        now = time.time()
+        cooldown = self.config.get("cooldown_seconds", 3.0)
+        last_poke = self.last_poke_time.get(sender_id_str, 0)
+        if now - last_poke < cooldown:
+            return
+        self.last_poke_time[sender_id_str] = now
+
+        logger.info(f"戳一戳事件已触发'g'指令，来自用户 {sender_id_str}")
+        await self._handle_g_command(event)
+        event.stop_event()
+
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE | filter.EventMessageType.PRIVATE_MESSAGE)
     async def on_advance_message(self, event: AstrMessageEvent):
         if await self._maybe_handle_registration(event):
             event.stop_event()
             return
-        session_id = self.get_session_id(event)
-        if session_id in self.game_sessions and event.message_str.strip().lower() in ["g", "gal"]:
-            session = self.game_sessions[session_id]
-            if time.time() - session.get("last_triggered_time", 0) < self.config.get("cooldown_seconds", 3.0):
-                return
-            session["last_triggered_time"] = time.time()
-            quick_key = self.config.get("quick_advance_key", "space")
-            await self._handle_game_action(event, session, key_to_press=quick_key)
+
+        if event.message_str.strip().lower() in ["g", "gal"]:
+            await self._handle_g_command(event)
             event.stop_event()

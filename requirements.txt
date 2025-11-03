@@ -6,3 +6,4 @@ opencv-python>=4.9.0.0
 # 仅在Windows系统上安装的库
 pypiwin32; sys_platform == 'win32'
 PyGetWindow; sys_platform == 'win32'
+dxcam; sys_platform == 'win32'

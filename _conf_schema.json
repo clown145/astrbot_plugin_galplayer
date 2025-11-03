@@ -53,6 +53,11 @@
     "type": "string",
     "default": "enter"
   },
+  "poke_to_g": {
+    "description": "是否开启戳一戳Bot等于发送 'g' 的功能。开启后, 在群聊或私聊中戳Bot会自动触发游戏进度推进。",
+    "type": "bool",
+    "default": true
+  },
   "registration_timeout_seconds": {
     "description": "按钮注册流程等待用户响应的超时时间（秒）。",
     "type": "float",
@@ -65,6 +70,21 @@
   },
   "screenshot_on_type": {
     "description": "在使用 /gal type (或 /gal 输) 指令后是否自动发送截图。",
+    "type": "bool",
+    "default": true
+  },
+  "remote_use_jpeg": {
+    "description": "远程模式截图是否使用 JPEG 编码（体积更小更快，可能有轻微压缩痕迹）。关闭则使用 PNG。",
+    "type": "bool",
+    "default": false
+  },
+  "background_use_dxcam": {
+    "description": "后台模式（输入法为 PostMessage）截图是否使用 dxcam。开启可在后台也尽量避免 UI 丢失；关闭则使用现有 PrintWindow 方案。",
+    "type": "bool",
+    "default": false
+  },
+  "foreground_use_dxcam": {
+    "description": "前台模式（输入法为 SendInput）截图是否使用 dxcam。开启可避免部分游戏 UI 丢失；关闭则使用现有 PrintWindow 方案。后台模式（PostMessage）不受影响。",
     "type": "bool",
     "default": true
   }

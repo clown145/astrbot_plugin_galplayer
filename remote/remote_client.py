@@ -12,11 +12,13 @@ import win32gui
 import win32ui
 import pygetwindow as gw
 from PIL import Image
+import numpy as np
 import base64
 from io import BytesIO
 import logging
 import configparser
 from pathlib import Path
+import threading
 
 CONFIG_FILE = Path("gal_client_config.ini")
 
@@ -68,6 +70,10 @@ class INPUT(ctypes.Structure):
 
 
 active_windows = {} # key: session_id, value: window object
+# dxcam 单例与互斥，避免频繁创建/销毁引发 COM 释放崩溃
+DXCAM_CAM = None
+DXCAM_INIT_FAILED = False
+DXCAM_LOCK = threading.Lock()
 
 def find_and_store_window(session_id: str, window_title: str):
     """为指定 session_id 查找并存储窗口对象"""
@@ -90,7 +96,21 @@ def find_and_store_window(session_id: str, window_title: str):
             del active_windows[session_id]
         return False
 
-def screenshot_window(window):
+def _encode_image_to_base64(im: Image.Image, fmt: str) -> str:
+    buf = BytesIO()
+    fmt_lower = (fmt or "png").lower()
+    if fmt_lower == "jpeg" or fmt_lower == "jpg":
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        # 质量 85，快速、体积小
+        im.save(buf, format="JPEG", quality=85, optimize=False)
+    else:
+        # PNG 使用低压缩提高速度
+        im.save(buf, format="PNG", compress_level=1)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def screenshot_window(window) -> Image.Image:
     hwnd = window._hWnd
     if win32gui.IsIconic(hwnd):
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
@@ -108,15 +128,73 @@ def screenshot_window(window):
         ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), 3)
         bmp_str = save_bitmap.GetBitmapBits(True)
         im = Image.frombuffer('RGB', (width, height), bmp_str, 'raw', 'BGRX', 0, 1)
-        buffered = BytesIO()
-        im.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        return img_str
+        return im
     finally:
         win32gui.DeleteObject(save_bitmap.GetHandle())
         save_dc.DeleteDC()
         mfc_dc.DeleteDC()
         win32gui.ReleaseDC(hwnd, hwnd_dc)
+
+def _get_dxcam():
+    global DXCAM_CAM, DXCAM_INIT_FAILED
+    if DXCAM_INIT_FAILED:
+        return None
+    try:
+        import dxcam
+    except Exception:
+        DXCAM_INIT_FAILED = True
+        return None
+    if DXCAM_CAM is None:
+        try:
+            DXCAM_CAM = dxcam.create(output_color="BGRA")
+        except Exception:
+            DXCAM_INIT_FAILED = True
+            return None
+    return DXCAM_CAM
+
+def screenshot_window_dxcam(window, activate: bool = False) -> Image.Image:
+    hwnd = window._hWnd
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        time.sleep(0.2)
+    cam = _get_dxcam()
+    if cam is None:
+        return screenshot_window(window)
+    if activate:
+        try:
+            if not window.isActive:
+                try:
+                    window.activate()
+                    time.sleep(0.05)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    left, top, right, bot = win32gui.GetWindowRect(hwnd)
+    width, height = right - left, bot - top
+    if width <= 0 or height <= 0:
+        raise ValueError("窗口尺寸无效，无法截图。")
+    try:
+        with DXCAM_LOCK:
+            frame = cam.grab(region=(left, top, right, bot))
+        if frame is None:
+            return screenshot_window(window)
+        if isinstance(frame, np.ndarray) and frame.ndim == 3:
+            # 避免 dxcam 区域取值包含右/下边界导致多出一列/一行
+            fh, fw = frame.shape[0], frame.shape[1]
+            if fw > width or fh > height:
+                frame = frame[:height, :width]
+            if frame.shape[2] == 4:
+                bgr = frame[:, :, :3]
+            else:
+                bgr = frame
+            rgb = bgr[:, :, ::-1]
+            im = Image.fromarray(rgb, mode="RGB")
+            return im
+        else:
+            return screenshot_window(window)
+    except Exception:
+        return screenshot_window(window)
 
 def press_key_on_window(window, key_name: str, method: str):
     VK_CODE = { 'backspace': 0x08, 'tab': 0x09, 'enter': 0x0D, 'shift': 0x10, 'ctrl': 0x11, 'alt': 0x12, 'pause': 0x13, 'caps_lock': 0x14, 'esc': 0x1B, 'space': 0x20, 'page_up': 0x21, 'page_down': 0x22, 'end': 0x23, 'home': 0x24, 'left': 0x25, 'up': 0x26, 'right': 0x27, 'down': 0x28, 'ins': 0x2D, 'del': 0x2E, '0': 0x30, '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34, '5': 0x35, '6': 0x36, '7': 0x37, '8': 0x38, '9': 0x39, 'a': 0x41, 'b': 0x42, 'c': 0x43, 'd': 0x44, 'e': 0x45, 'f': 0x46, 'g': 0x47, 'h': 0x48, 'i': 0x49, 'j': 0x4A, 'k': 0x4B, 'l': 0x4C, 'm': 0x4D, 'n': 0x4E, 'o': 0x4F, 'p': 0x50, 'q': 0x51, 'r': 0x52, 's': 0x53, 't': 0x54, 'u': 0x55, 'v': 0x56, 'w': 0x57, 'x': 0x58, 'y': 0x59, 'z': 0x5A, 'f1': 0x70, 'f2': 0x71, 'f3': 0x72, 'f4': 0x73, 'f5': 0x74, 'f6': 0x75, 'f7': 0x76, 'f8': 0x77, 'f9': 0x78, 'f10': 0x79, 'f11': 0x7A, 'f12': 0x7B, ';': 0xBA, '=': 0xBB, ',': 0xBC, '-': 0xBD, '.': 0xBE, '/': 0xBF, '`': 0xC0, '[': 0xDB, '\\': 0xDC, ']': 0xDD, "'": 0xDE }
@@ -143,9 +221,9 @@ def press_key_on_window(window, key_name: str, method: str):
         lParam_down = (1) | (scan_code << 16)
         if key_code in EXTENDED_KEYS: lParam_down |= (1 << 24)
         lParam_up = lParam_down | (1 << 30) | (1 << 31)
-        win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, key_code, lParam_down)
+        win32api.SendMessage(hwnd, win32con.WM_KEYDOWN, key_code, lParam_down)
         time.sleep(0.05)
-        win32api.PostMessage(hwnd, win32con.WM_KEYUP, key_code, lParam_up)
+        win32api.SendMessage(hwnd, win32con.WM_KEYUP, key_code, lParam_up)
 
 
 def get_window_metrics(window):
@@ -196,10 +274,14 @@ def click_window_by_ratio(window, x_ratio: float, y_ratio: float, method: str):
         time.sleep(0.02)
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     else:
+        screen_x = metrics["screen_left"] + metrics["border_left"] + client_x
+        screen_y = metrics["screen_top"] + metrics["border_top"] + client_y
+        win32api.SetCursorPos((screen_x, screen_y))
+        time.sleep(0.05)
         l_param = (client_y << 16) | (client_x & 0xFFFF)
-        win32api.PostMessage(metrics["hwnd"], win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, l_param)
+        win32api.SendMessage(metrics["hwnd"], win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, l_param)
         time.sleep(0.02)
-        win32api.PostMessage(metrics["hwnd"], win32con.WM_LBUTTONUP, 0, l_param)
+        win32api.SendMessage(metrics["hwnd"], win32con.WM_LBUTTONUP, 0, l_param)
 
 
 async def send_json(websocket, data):
@@ -248,9 +330,24 @@ async def handle_command(websocket, command):
             
             delay = command.get("delay", 0)
             if delay > 0: await asyncio.sleep(delay)
-            
-            img_b64 = screenshot_window(game_window)
-            await send_json(websocket, {"request_id": request_id, "status": "success", "image_data": img_b64})
+            use_dxcam = bool(command.get("use_dxcam", False))
+            img_format = command.get("format", "png")
+            bring_to_front = bool(command.get("bring_to_front", False))
+            logger.info(f"会话 [{session_id}] 开始截图: req={request_id}, dxcam={use_dxcam}, fmt={img_format}, delay={delay}")
+            # 捕获图像（PIL）
+            im = screenshot_window_dxcam(game_window, bring_to_front) if use_dxcam else screenshot_window(game_window)
+            # 可选下采样：超过 1920 宽时等比缩小（提升编码速度与传输稳定性）
+            try:
+                max_w = 1920
+                if im.width > max_w:
+                    ratio = max_w / float(im.width)
+                    im = im.resize((max_w, max(1, int(im.height * ratio))), Image.BILINEAR)
+            except Exception:
+                pass
+            # 编码 -> base64（尽量在当前线程完成，避免 dxcam 跨线程问题）
+            img_b64 = _encode_image_to_base64(im, img_format)
+            await send_json(websocket, {"request_id": request_id, "status": "success", "image_data": img_b64, "format": img_format})
+            logger.info(f"会话 [{session_id}] 截图完成: req={request_id}, bytes={len(img_b64)}(b64)")
 
     except Exception as e:
         logger.error(f"处理会话 [{session_id}] 指令 '{action}' 时出错: {e}")
@@ -262,10 +359,10 @@ async def client_handler(uri):
         logger.error("错误：请在配置文件 gal_client_config.ini 中设置 SecretToken！")
         return
 
-    ten_mb = 10 * 1024 * 1024
     while True:
         try:
-            async with websockets.connect(uri, max_size=ten_mb) as websocket:
+            # 取消消息大小上限，避免高分辨率截图触发超限断开
+            async with websockets.connect(uri, max_size=None) as websocket:
                 logger.info(f"已连接到服务器 {uri}，正在发送验证信息...")
                 auth_payload = {"type": "auth", "token": SECRET_TOKEN}
                 await websocket.send(json.dumps(auth_payload))
@@ -281,7 +378,8 @@ async def client_handler(uri):
                 async for message in websocket:
                     try:
                         command = json.loads(message)
-                        asyncio.create_task(handle_command(websocket, command))
+                        # 顺序处理以避免并发截图导致资源竞争
+                        await handle_command(websocket, command)
                     except json.JSONDecodeError:
                         logger.error(f"收到无法解析的消息: {message}")
         except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError, asyncio.TimeoutError) as e:

@@ -42,9 +42,11 @@ class RemoteControlServer:
                         if data.get("status") == "success":
                             screenshot_bytes = base64.b64decode(data.get("image_data"))
                             self.pending_screenshots[request_id].set_result(screenshot_bytes)
+                            logger.debug(f"收到远程截图成功: req={request_id}, bytes={len(screenshot_bytes)}")
                         else:
                             error_message = data.get("error", "未知错误")
                             self.pending_screenshots[request_id].set_exception(Exception(f"远程操作失败: {error_message}"))
+                            logger.debug(f"收到远程截图错误: req={request_id}, err={error_message}")
                 except Exception as e:
                     logger.error(f"处理客户端消息时出错: {e}")
         except websockets.exceptions.ConnectionClosed as e:
@@ -58,9 +60,9 @@ class RemoteControlServer:
             self.pending_screenshots.clear()
 
     async def start(self):
-        ten_mb = 10 * 1024 * 1024
         logger.info(f"正在启动远程控制服务器于 ws://{self.host}:{self.port}")
-        self.server = await websockets.serve(self._handler, self.host, self.port, max_size=ten_mb)
+        # 取消消息大小上限，避免高分辨率截图触发超限断开
+        self.server = await websockets.serve(self._handler, self.host, self.port, max_size=None)
 
     async def stop(self):
         if self.server:
@@ -100,23 +102,36 @@ class RemoteControlServer:
             }
         )
 
-    async def remote_screenshot(self, session_id: str, save_path: str, delay: float):
-        """对指定会话的窗口截图"""
+    async def remote_screenshot(self, session_id: str, save_path: str, delay: float, use_dxcam: bool = False, image_format: str = "jpeg", bring_to_front: bool = False):
+        """对指定会话的窗口截图。
+        use_dxcam: 是否在远程端使用 dxcam 进行截图（失败会由客户端回退）。
+        """
         request_id = str(uuid.uuid4())
-        command = {"action": "screenshot", "session_id": session_id, "request_id": request_id, "delay": delay}
+        command = {
+            "action": "screenshot",
+            "session_id": session_id,
+            "request_id": request_id,
+            "delay": delay,
+            "use_dxcam": bool(use_dxcam),
+            "format": image_format,
+            "bring_to_front": bool(bring_to_front),
+        }
         
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         self.pending_screenshots[request_id] = future
 
         try:
+            logger.debug(f"下发远程截图指令: session={session_id}, req={request_id}, use_dxcam={use_dxcam}, fmt={image_format}, delay={delay}")
             await self._send_command(command)
-            screenshot_bytes = await asyncio.wait_for(future, timeout=15.0)
+            # 提高远程截图等待时间，避免大图/慢网络导致超时
+            screenshot_bytes = await asyncio.wait_for(future, timeout=60.0)
             with open(save_path, "wb") as f:
                 f.write(screenshot_bytes)
+            logger.debug(f"远程截图完成: session={session_id}, req={request_id}, bytes={len(screenshot_bytes)} -> {save_path}")
             return True
         except asyncio.TimeoutError:
-            logger.error("等待远程截图超时。")
+            logger.error(f"等待远程截图超时: session={session_id}, req={request_id}")
             raise Exception("等待远程截图超时。")
         finally:
             if request_id in self.pending_screenshots:

@@ -8,6 +8,7 @@ import win32gui
 import win32ui
 import pygetwindow as gw
 from PIL import Image
+import numpy as np
 
 wintypes.ULONG_PTR = wintypes.WPARAM
 
@@ -92,6 +93,72 @@ def screenshot_window(window, save_path: str):
     return save_path
 
 
+def screenshot_window_dxcam(window, save_path: str, activate: bool = True):
+    """使用 dxcam 进行前台截图（桌面复制），回退到 PrintWindow。
+
+    行为：
+    - 若窗口最小化则先还原；尝试激活窗口以确保前台内容完整。
+    - 使用 dxcam 对窗口矩形区域进行抓取；若失败，则回退到原有 PrintWindow 方案。
+    """
+    try:
+        import dxcam  # 延迟导入，避免非 Windows 或缺少依赖时报错
+    except Exception:
+        # 回退到原逻辑
+        return screenshot_window(window, save_path)
+
+    hwnd = window._hWnd
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        time.sleep(0.2)
+
+    if activate:
+        try:
+            if not window.isActive:
+                try:
+                    window.activate()
+                    time.sleep(0.05)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    width, height = right - left, bottom - top
+    if width <= 0 or height <= 0:
+        raise ValueError("窗口尺寸无效，无法截图。")
+
+    try:
+        cam = dxcam.create(output_color="BGRA")
+        # 直接按窗口矩形抓取（虚拟屏坐标）
+        frame = cam.grab(region=(left, top, right, bottom))
+        if frame is None:
+            # 某些情况下返回 None，回退
+            return screenshot_window(window, save_path)
+
+        # frame: HxWxC, BGRA/BGR -> 转换为 RGB
+        if isinstance(frame, np.ndarray) and frame.ndim == 3:
+            # 避免 dxcam 区域取值包含右/下边界导致多出一列/一行
+            fh, fw = frame.shape[0], frame.shape[1]
+            if fw > width or fh > height:
+                frame = frame[:height, :width]
+            if frame.shape[2] == 4:
+                # BGRA -> BGR (丢弃 alpha)
+                bgr = frame[:, :, :3]
+            else:
+                bgr = frame
+            rgb = bgr[:, :, ::-1]
+            im = Image.fromarray(rgb, mode="RGB")
+        else:
+            # 意料之外的返回类型，回退
+            return screenshot_window(window, save_path)
+
+        im.save(save_path)
+        return save_path
+    except Exception:
+        # 任意异常时回退到 PrintWindow
+        return screenshot_window(window, save_path)
+
+
 def press_key_on_window(window, key_name: str, method: str):
     """向指定窗口模拟按键。"""
     VK_CODE = {
@@ -136,9 +203,9 @@ def press_key_on_window(window, key_name: str, method: str):
         if key_code in EXTENDED_KEYS:
             lParam_down |= (1 << 24)
         lParam_up = lParam_down | (1 << 30) | (1 << 31)
-        win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, key_code, lParam_down)
+        win32api.SendMessage(hwnd, win32con.WM_KEYDOWN, key_code, lParam_down)
         time.sleep(0.05)
-        win32api.PostMessage(hwnd, win32con.WM_KEYUP, key_code, lParam_up)
+        win32api.SendMessage(hwnd, win32con.WM_KEYUP, key_code, lParam_up)
 
 
 def get_window_metrics(window):
@@ -191,7 +258,11 @@ def click_on_window(window, x_ratio: float, y_ratio: float, method: str):
         time.sleep(0.02)
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     else:
+        screen_x = metrics["screen_left"] + metrics["border_left"] + client_x
+        screen_y = metrics["screen_top"] + metrics["border_top"] + client_y
+        win32api.SetCursorPos((screen_x, screen_y))
+        time.sleep(0.05)
         l_param = (client_y << 16) | (client_x & 0xFFFF)
-        win32api.PostMessage(metrics["hwnd"], win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, l_param)
+        win32api.SendMessage(metrics["hwnd"], win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, l_param)
         time.sleep(0.02)
-        win32api.PostMessage(metrics["hwnd"], win32con.WM_LBUTTONUP, 0, l_param)
+        win32api.SendMessage(metrics["hwnd"], win32con.WM_LBUTTONUP, 0, l_param)
