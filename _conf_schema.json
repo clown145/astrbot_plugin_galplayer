@@ -58,6 +58,11 @@
     "type": "bool",
     "default": true
   },
+  "g_triggers_click": {
+    "description": "【高级】是否将 'g' 和戳一戳的行为从“按键”模式更改为“点击”模式。开启后, 'g'指令将点击一个名为'快速推进'的特殊注册按钮。适用于后台模式下按键无效但鼠标有效的游戏。",
+    "type": "bool",
+    "default": false
+  },
   "registration_timeout_seconds": {
     "description": "按钮注册流程等待用户响应的超时时间（秒）。",
     "type": "float",

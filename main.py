@@ -31,6 +31,7 @@ except ImportError:
 
 PLUGIN_NAME = "astrbot_plugin_galplayer"
 BUTTONS_FILE_NAME = "buttons.json"
+QUICK_ADVANCE_BUTTON_NAME = "快速推进"
 
 
 def get_plugin_data_path() -> Path:
@@ -72,7 +73,7 @@ class RegistrationState:
     temp_paths: list[Path] = field(default_factory=list)
     last_event: Optional[AstrMessageEvent] = None
 
-@register(PLUGIN_NAME, "随风潜入夜", "和群友一起推 Galgame", "1.3.0")
+@register(PLUGIN_NAME, "随风潜入夜", "和群友一起推 Galgame", "1.3.1")
 class GalgamePlayerPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -86,6 +87,7 @@ class GalgamePlayerPlugin(Star):
         # Poke to g feature
         self.poke_to_g = self.config.get("poke_to_g", False)
         self.last_poke_time: Dict[str, float] = {}
+        self.g_triggers_click = self.config.get("g_triggers_click", False)
         
         self.local_mode_available = False
         if IS_WINDOWS:
@@ -772,14 +774,67 @@ class GalgamePlayerPlugin(Star):
     async def _handle_g_command(self, event: AstrMessageEvent):
         """处理 'g' 或 'gal' 指令或戳一戳事件，推进游戏。"""
         session_id = self.get_session_id(event)
-        if session_id in self.game_sessions:
-            session = self.game_sessions[session_id]
+        if session_id not in self.game_sessions:
+            return
 
-            # 检查游戏动作的统一冷却时间
-            if time.time() - session.get("last_triggered_time", 0) < self.config.get("cooldown_seconds", 3.0):
+        session = self.game_sessions[session_id]
+
+        # 统一的冷却时间检查
+        if time.time() - session.get("last_triggered_time", 0) < self.config.get("cooldown_seconds", 3.0):
+            return
+        session["last_triggered_time"] = time.time()
+
+        # 如果开启了点击模式
+        if self.g_triggers_click:
+            window_title = self._get_window_title(session)
+            if not window_title:
+                await event.send(event.plain_result("无法确认当前窗口，请重新开始游戏。"))
                 return
-            session["last_triggered_time"] = time.time()
 
+            buttons = self.buttons_data.get(window_title, {})
+            mapping = buttons.get(QUICK_ADVANCE_BUTTON_NAME)
+
+            if not mapping:
+                await event.send(event.plain_result(
+                    f"【点击模式】当前游戏未注册名为“{QUICK_ADVANCE_BUTTON_NAME}”的按钮。\n"
+                    f"请使用 /注册按钮 功能，将“{QUICK_ADVANCE_BUTTON_NAME}”注册在一个安全的位置（如对话框空白处），确保点击它既可以推进对话，又不会误点到游戏选项。"
+                ))
+                return
+
+            # 执行点击
+            try:
+                await self._perform_click_at_ratio(
+                    event,
+                    session,
+                    (
+                        float(mapping.get("x_ratio", 0.0)),
+                        float(mapping.get("y_ratio", 0.0)),
+                    ),
+                )
+            except Exception as exc:
+                logger.error(f"执行快捷推进按钮点击失败: {exc}", exc_info=True)
+                await event.send(event.plain_result(f"执行点击时出现错误：{exc}"))
+                return
+
+            # 点击后根据配置截图
+            screenshot_on_click = self.config.get("screenshot_on_click", True)
+            if isinstance(screenshot_on_click, str):
+                screenshot_on_click = screenshot_on_click.lower() not in {"0", "false", "no"}
+
+            if screenshot_on_click:
+                delay_seconds = self.config.get("screenshot_delay_seconds", 0.5)
+                try:
+                    delay_seconds = float(delay_seconds)
+                except (TypeError, ValueError):
+                    delay_seconds = 0.5
+                if delay_seconds > 0:
+                    await asyncio.sleep(delay_seconds)
+
+                # 调用截图，但不按键
+                await self._handle_game_action(event, session, key_to_press=None, take_screenshot=True)
+
+        else:
+            # 保持原有的按键模式
             quick_key = self.config.get("quick_advance_key", "space")
             await self._handle_game_action(event, session, key_to_press=quick_key)
 
