@@ -253,7 +253,7 @@ class GalgamePlayerPlugin(Star):
 
         sender_id = event.get_sender_id()
         if sender_id != state.initiator_id:
-            await event.send(event.plain_result("当前有其他用户正在注册按钮，请等待该流程完成。"))
+            # 静默忽略非操作用户的消息，不再发送提示
             return True
 
         message_text = event.message_str.strip()
