@@ -383,7 +383,7 @@ async def client_handler(uri):
     while True:
         try:
             # 取消消息大小上限，避免高分辨率截图触发超限断开
-            async with websockets.connect(uri, max_size=None) as websocket:
+            async with websockets.connect(uri, max_size=None, ping_interval=10, ping_timeout=10) as websocket:
                 logger.info(f"已连接到服务器 {uri}，正在发送验证信息...")
                 auth_payload = {"type": "auth", "token": SECRET_TOKEN}
                 await websocket.send(json.dumps(auth_payload))
@@ -405,11 +405,9 @@ async def client_handler(uri):
                         logger.error(f"收到无法解析的消息: {message}")
         except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError, asyncio.TimeoutError) as e:
             logger.error(f"连接失败或中断: {e}. 5秒后重试...")
-            active_windows.clear() # 连接断开时，清空所有会话
             await asyncio.sleep(5)
         except Exception as e:
             logger.error(f"发生未知错误: {e}. 5秒后重试...")
-            active_windows.clear()
             await asyncio.sleep(5)
 
 if __name__ == "__main__":

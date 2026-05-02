@@ -167,6 +167,7 @@ class GalgamePlayerPlugin(Star):
                     host = _as_str(server_config.get("host"), CONFIG_DEFAULTS["remote_server"]["host"])
                     port = int(_as_float(server_config.get("port"), CONFIG_DEFAULTS["remote_server"]["port"]))
                     self.remote_server = RemoteControlServer(host, port, secret_token)
+                    self.remote_server.on_client_connected = self._on_remote_client_connected
                     asyncio.create_task(self.remote_server.start())
         
         logger.info(f"Galgame 插件已加载。运行模式: {self.mode.upper()}")
@@ -197,6 +198,23 @@ class GalgamePlayerPlugin(Star):
     def _cfg_dict(self, key: str) -> Dict[str, Any]:
         value = self._cfg(key)
         return value if isinstance(value, dict) else dict(CONFIG_DEFAULTS.get(key, {}))
+
+    async def _on_remote_client_connected(self) -> None:
+        remote_sessions = [
+            (session_id, session)
+            for session_id, session in self.game_sessions.items()
+            if session.get("window_title") and "window" not in session
+        ]
+        if not remote_sessions:
+            return
+
+        logger.info(f"远程客户端重连成功，正在尝试恢复 {len(remote_sessions)} 个会话绑定。")
+        for session_id, session in remote_sessions:
+            try:
+                await self.remote_server.remote_start_session(session_id, str(session["window_title"]))
+                logger.info(f"远程会话已恢复绑定: {session_id} -> {session['window_title']}")
+            except Exception as exc:
+                logger.warning(f"恢复远程会话绑定失败: {session_id}: {exc}")
 
     def _get_registration_timeout(self) -> float:
         return max(10.0, self._cfg_float("registration_timeout_seconds"))
@@ -538,8 +556,7 @@ class GalgamePlayerPlugin(Star):
                 await self.remote_server.remote_screenshot(session_id, save_path_str, delay, use_dxcam, image_format, bring_to_front)
                 await event.send(event.image_result(save_path_str))
         except ConnectionError:
-            await self._cleanup_remote_session(session_id)
-            await event.send(event.plain_result("远程客户端未连接。请确保远程脚本正在运行并已连接。"))
+            await event.send(event.plain_result("远程客户端连接已断开，正在等待自动重连。请稍后重试。"))
         except Exception as e:
             # 某些环境下会抛出 "Timed out" 或自定义的超时提示；这类情况不再向用户报错，仅记录为警告
             msg = str(e).strip().lower()

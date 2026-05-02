@@ -16,6 +16,7 @@ class RemoteControlServer:
         self.server = None
         self.client = None
         self.pending_requests = {}
+        self.on_client_connected = None
 
     def _resolve_pending_request(self, request_id: str, payload: dict) -> bool:
         future = self.pending_requests.get(request_id)
@@ -53,6 +54,11 @@ class RemoteControlServer:
 
         logger.info(f"远程客户端已连接: {websocket.remote_address}")
         self.client = websocket
+        if self.on_client_connected:
+            try:
+                await self.on_client_connected()
+            except Exception as exc:
+                logger.warning(f"客户端连接后执行会话重绑失败: {exc}")
         try:
             async for message in websocket:
                 try:
@@ -78,7 +84,14 @@ class RemoteControlServer:
     async def start(self):
         logger.info(f"正在启动远程控制服务器于 ws://{self.host}:{self.port}（未启用 TLS）")
         # 取消消息大小上限，避免高分辨率截图触发超限断开
-        self.server = await websockets.serve(self._handler, self.host, self.port, max_size=None)
+        self.server = await websockets.serve(
+            self._handler,
+            self.host,
+            self.port,
+            max_size=None,
+            ping_interval=10,
+            ping_timeout=10,
+        )
 
     async def stop(self):
         if self.server:
