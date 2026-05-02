@@ -38,6 +38,46 @@
       "SendInput"
     ]
   },
+  "background_use_dxcam": {
+    "description": "后台模式（输入法为 PostMessage）截图是否使用 dxcam。开启可在后台尽量避免 UI 丢失；关闭则使用 PrintWindow 方案。",
+    "type": "bool",
+    "default": false
+  },
+  "foreground_use_dxcam": {
+    "description": "前台模式（输入法为 SendInput）截图是否使用 dxcam。开启可避免部分游戏 UI 丢失；关闭则使用 PrintWindow 方案。后台模式（PostMessage）不受影响。",
+    "type": "bool",
+    "default": true
+  },
+  "remote_use_jpeg": {
+    "description": "远程模式截图是否使用 JPEG 编码（体积更小更快，可能有轻微压缩痕迹）。关闭则使用 PNG。",
+    "type": "bool",
+    "default": false
+  },
+  "screenshot_on_click": {
+    "description": "使用 /点 指令或注册流程执行点击后是否自动发送最新截图。",
+    "type": "bool",
+    "default": true
+  },
+  "screenshot_on_type": {
+    "description": "在使用 /输入 (或 /输、/type) 指令后是否自动发送截图。",
+    "type": "bool",
+    "default": true
+  },
+  "poke_to_g": {
+    "description": "是否开启戳一戳 Bot 等于发送 'g' 的功能。开启后，在群聊或私聊中戳 Bot 会自动触发游戏推进。",
+    "type": "bool",
+    "default": true
+  },
+  "g_triggers_click": {
+    "description": "【高级】是否将 'g' 和戳一戳的行为从按键模式改为点击模式。开启后，'g' 指令会点击一个名为 '快速推进' 的特殊注册按钮。",
+    "type": "bool",
+    "default": false
+  },
+  "quick_advance_key": {
+    "description": "发送 'g' 或 'gal' 时模拟按下的按键。",
+    "type": "string",
+    "default": "enter"
+  },
   "cooldown_seconds": {
     "description": "触发指令的最小时间间隔（秒），用于防刷屏。",
     "type": "float",
@@ -48,49 +88,9 @@
     "type": "float",
     "default": 1.0
   },
-  "quick_advance_key": {
-    "description": "发送 'g' 或 'gal' 时模拟按下的按键。",
-    "type": "string",
-    "default": "enter"
-  },
-  "poke_to_g": {
-    "description": "是否开启戳一戳Bot等于发送 'g' 的功能。开启后, 在群聊或私聊中戳Bot会自动触发游戏进度推进。",
-    "type": "bool",
-    "default": true
-  },
-  "g_triggers_click": {
-    "description": "【高级】是否将 'g' 和戳一戳的行为从“按键”模式更改为“点击”模式。开启后, 'g'指令将点击一个名为'快速推进'的特殊注册按钮。适用于后台模式下按键无效但鼠标有效的游戏。",
-    "type": "bool",
-    "default": false
-  },
   "registration_timeout_seconds": {
     "description": "按钮注册流程等待用户响应的超时时间（秒）。",
     "type": "float",
     "default": 60.0
-  },
-  "screenshot_on_click": {
-    "description": "使用 /点 指令或注册流程执行点击后是否自动发送最新截图。",
-    "type": "bool",
-    "default": true
-  },
-  "screenshot_on_type": {
-    "description": "在使用 /gal type (或 /gal 输) 指令后是否自动发送截图。",
-    "type": "bool",
-    "default": true
-  },
-  "remote_use_jpeg": {
-    "description": "远程模式截图是否使用 JPEG 编码（体积更小更快，可能有轻微压缩痕迹）。关闭则使用 PNG。",
-    "type": "bool",
-    "default": false
-  },
-  "background_use_dxcam": {
-    "description": "后台模式（输入法为 PostMessage）截图是否使用 dxcam。开启可在后台也尽量避免 UI 丢失；关闭则使用现有 PrintWindow 方案。",
-    "type": "bool",
-    "default": false
-  },
-  "foreground_use_dxcam": {
-    "description": "前台模式（输入法为 SendInput）截图是否使用 dxcam。开启可避免部分游戏 UI 丢失；关闭则使用现有 PrintWindow 方案。后台模式（PostMessage）不受影响。",
-    "type": "bool",
-    "default": true
   }
 }

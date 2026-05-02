@@ -33,6 +33,27 @@ PLUGIN_NAME = "astrbot_plugin_galplayer"
 BUTTONS_FILE_NAME = "buttons.json"
 QUICK_ADVANCE_BUTTON_NAME = "快速推进"
 
+CONFIG_DEFAULTS: Dict[str, Any] = {
+    "mode": "local",
+    "remote_secret_token": "",
+    "input_method": "SendInput",
+    "cooldown_seconds": 3.0,
+    "screenshot_delay_seconds": 1.0,
+    "quick_advance_key": "enter",
+    "poke_to_g": True,
+    "g_triggers_click": False,
+    "registration_timeout_seconds": 60.0,
+    "screenshot_on_click": True,
+    "screenshot_on_type": True,
+    "remote_use_jpeg": False,
+    "background_use_dxcam": False,
+    "foreground_use_dxcam": True,
+    "remote_server": {
+        "host": "0.0.0.0",
+        "port": 8765,
+    },
+}
+
 
 def get_plugin_data_path() -> Path:
     return StarTools.get_data_dir(PLUGIN_NAME)
@@ -60,6 +81,29 @@ def save_buttons_data(data: Dict[str, Dict[str, Any]]) -> None:
     with data_file.open("w", encoding="utf-8") as fp:
         json.dump(data, fp, ensure_ascii=False, indent=2)
 
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() not in {"0", "false", "no", "off", ""}
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _as_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_str(value: Any, default: str) -> str:
+    if value is None:
+        return default
+    return str(value)
+
 @dataclass
 class RegistrationState:
     stage: str
@@ -73,7 +117,7 @@ class RegistrationState:
     temp_paths: list[Path] = field(default_factory=list)
     last_event: Optional[AstrMessageEvent] = None
 
-@register(PLUGIN_NAME, "随风潜入夜", "和群友一起推 Galgame", "1.3.1")
+@register(PLUGIN_NAME, "随风潜入夜", "和群友一起推 Galgame", "1.3.2")
 class GalgamePlayerPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -85,9 +129,9 @@ class GalgamePlayerPlugin(Star):
         self.temp_img_dir.mkdir(parents=True, exist_ok=True)
 
         # Poke to g feature
-        self.poke_to_g = self.config.get("poke_to_g", False)
+        self.poke_to_g = self._cfg_bool("poke_to_g")
         self.last_poke_time: Dict[str, float] = {}
-        self.g_triggers_click = self.config.get("g_triggers_click", False)
+        self.g_triggers_click = self._cfg_bool("g_triggers_click")
         
         self.local_mode_available = False
         if IS_WINDOWS:
@@ -98,7 +142,7 @@ class GalgamePlayerPlugin(Star):
             except ImportError as e:
                 logger.critical(f"当前是 Windows 系统，但无法加载本地操作模块。请检查依赖。错误: {e}")
         
-        self.mode = self.config.get("mode", "local")
+        self.mode = self._cfg_str("mode")
 
         if self.mode == "local":
             if not IS_WINDOWS:
@@ -114,14 +158,14 @@ class GalgamePlayerPlugin(Star):
                 logger.error("远程模式需要安装 \"websockets\" 库，但无法导入，插件功能将被禁用。")
                 self.mode = "disabled"
             else:
-                secret_token = self.config.get("remote_secret_token")
+                secret_token = self._cfg_str("remote_secret_token")
                 if not secret_token:
                     logger.error("远程模式已启用，但未在配置中设置 \"remote_secret_token\"，插件功能将被禁用。")
                     self.mode = "disabled"
                 else:
-                    server_config = self.config.get("remote_server", {})
-                    host = server_config.get("host", "0.0.0.0")
-                    port = server_config.get("port", 8765)
+                    server_config = self._cfg_dict("remote_server")
+                    host = _as_str(server_config.get("host"), CONFIG_DEFAULTS["remote_server"]["host"])
+                    port = int(_as_float(server_config.get("port"), CONFIG_DEFAULTS["remote_server"]["port"]))
                     self.remote_server = RemoteControlServer(host, port, secret_token)
                     asyncio.create_task(self.remote_server.start())
         
@@ -138,12 +182,24 @@ class GalgamePlayerPlugin(Star):
         group_id = event.get_group_id()
         return f"group_{group_id}" if group_id else f"private_{event.get_sender_id()}"
 
+    def _cfg(self, key: str) -> Any:
+        return self.config.get(key, CONFIG_DEFAULTS.get(key))
+
+    def _cfg_str(self, key: str) -> str:
+        return _as_str(self._cfg(key), str(CONFIG_DEFAULTS.get(key, "")))
+
+    def _cfg_bool(self, key: str) -> bool:
+        return _as_bool(self._cfg(key), bool(CONFIG_DEFAULTS.get(key, False)))
+
+    def _cfg_float(self, key: str) -> float:
+        return _as_float(self._cfg(key), float(CONFIG_DEFAULTS.get(key, 0.0)))
+
+    def _cfg_dict(self, key: str) -> Dict[str, Any]:
+        value = self._cfg(key)
+        return value if isinstance(value, dict) else dict(CONFIG_DEFAULTS.get(key, {}))
+
     def _get_registration_timeout(self) -> float:
-        try:
-            timeout = float(self.config.get("registration_timeout_seconds", 60))
-        except (TypeError, ValueError):
-            timeout = 60.0
-        return max(10.0, timeout)
+        return max(10.0, self._cfg_float("registration_timeout_seconds"))
 
     def _copy_to_temp(self, source: Path, session_id: str, suffix: str) -> Path:
         destination = self.temp_img_dir / f"{session_id}_{suffix}_{uuid.uuid4().hex}.png"
@@ -191,6 +247,25 @@ class GalgamePlayerPlugin(Star):
         for temp_path in list(state.temp_paths):
             self._remove_temp_path(state, temp_path)
 
+    async def _cleanup_remote_session(self, session_id: str) -> None:
+        session = self.game_sessions.pop(session_id, None)
+        self._clear_registration_state(session_id)
+        if not session:
+            return
+
+        save_path = session.get("save_path")
+        if isinstance(save_path, Path) and save_path.exists():
+            try:
+                save_path.unlink()
+            except Exception as exc:
+                logger.debug(f"清理远程会话截图失败: {save_path}: {exc}")
+
+        if self.remote_server and self.remote_server.client:
+            try:
+                await self.remote_server.remote_stop_session(session_id)
+            except Exception as exc:
+                logger.debug(f"通知远程客户端结束会话失败: {exc}")
+
     def _schedule_registration_timeout(self, session_id: str, event: AstrMessageEvent) -> None:
         state = self.registration_states.get(session_id)
         if not state:
@@ -222,7 +297,7 @@ class GalgamePlayerPlugin(Star):
         session: Dict[str, Any],
         ratio: Tuple[float, float],
     ) -> None:
-        method = self.config.get("input_method", "PostMessage")
+        method = self._cfg_str("input_method")
         x_ratio = max(0.0, min(1.0, ratio[0]))
         y_ratio = max(0.0, min(1.0, ratio[1]))
         session_id = self.get_session_id(event)
@@ -307,11 +382,7 @@ class GalgamePlayerPlugin(Star):
                 self._clear_registration_state(session_id)
                 return True
 
-            delay_seconds = self.config.get("screenshot_delay_seconds", 0.5)
-            try:
-                delay_seconds = float(delay_seconds)
-            except (TypeError, ValueError):
-                delay_seconds = 0.5
+            delay_seconds = self._cfg_float("screenshot_delay_seconds")
             if delay_seconds > 0:
                 await asyncio.sleep(delay_seconds)
 
@@ -409,16 +480,16 @@ class GalgamePlayerPlugin(Star):
             if not window or not window.visible:
                 raise Exception("游戏窗口不可见或已关闭。")
             if key_to_press:
-                input_method = self.config.get("input_method", "PostMessage")
+                input_method = self._cfg_str("input_method")
                 await asyncio.to_thread(local_operations.press_key_on_window, window, key_to_press, input_method)
             if take_screenshot:
                 if key_to_press:
-                    await asyncio.sleep(self.config.get("screenshot_delay_seconds", 0.5))
+                    await asyncio.sleep(self._cfg_float("screenshot_delay_seconds"))
                 save_path_str = str(session["save_path"])
-                input_method = self.config.get("input_method", "PostMessage")
+                input_method = self._cfg_str("input_method")
                 use_dxcam = (
-                    (input_method == "SendInput" and bool(self.config.get("foreground_use_dxcam", True)))
-                    or (input_method == "PostMessage" and bool(self.config.get("background_use_dxcam", False)))
+                    (input_method == "SendInput" and self._cfg_bool("foreground_use_dxcam"))
+                    or (input_method == "PostMessage" and self._cfg_bool("background_use_dxcam"))
                 )
                 if use_dxcam and hasattr(local_operations, "screenshot_window_dxcam"):
                     await asyncio.to_thread(local_operations.screenshot_window_dxcam, window, save_path_str, input_method == "SendInput")
@@ -438,36 +509,49 @@ class GalgamePlayerPlugin(Star):
             return
         try:
             if key_to_press:
-                input_method = self.config.get("input_method", "PostMessage")
+                input_method = self._cfg_str("input_method")
                 await self.remote_server.remote_press_key(session_id, key_to_press, input_method)
             if take_screenshot:
-                delay = self.config.get("screenshot_delay_seconds", 0.5) if key_to_press else 0
+                # 远程模式：delay 传给客户端，由客户端在截图前等待，本地不再重复 sleep
+                delay = self._cfg_float("screenshot_delay_seconds") if key_to_press else 0
                 # 确保保存扩展名与编码格式一致（仅远程）
-                desired_ext = "jpg" if bool(self.config.get("remote_use_jpeg", False)) else "png"
+                desired_ext = "jpg" if self._cfg_bool("remote_use_jpeg") else "png"
                 current_path: Path = session["save_path"]
                 if current_path.suffix.lower().lstrip(".") != desired_ext:
+                    # 清理旧扩展名文件
+                    if current_path.exists():
+                        try:
+                            current_path.unlink()
+                        except Exception as exc:
+                            logger.debug(f"清理旧截图文件失败: {current_path}: {exc}")
                     new_path = current_path.with_suffix(f".{desired_ext}")
                     session["save_path"] = new_path
                 save_path_str = str(session["save_path"])
-                input_method = self.config.get("input_method", "PostMessage")
+                input_method = self._cfg_str("input_method")
                 use_dxcam = (
-                    (input_method == "SendInput" and bool(self.config.get("foreground_use_dxcam", True)))
-                    or (input_method == "PostMessage" and bool(self.config.get("background_use_dxcam", False)))
+                    (input_method == "SendInput" and self._cfg_bool("foreground_use_dxcam"))
+                    or (input_method == "PostMessage" and self._cfg_bool("background_use_dxcam"))
                 )
                 # 是否使用 JPEG 由配置控制（仅影响远程编码格式）
-                image_format = "jpeg" if bool(self.config.get("remote_use_jpeg", False)) else "png"
+                image_format = "jpeg" if self._cfg_bool("remote_use_jpeg") else "png"
                 bring_to_front = (input_method == "SendInput")
                 await self.remote_server.remote_screenshot(session_id, save_path_str, delay, use_dxcam, image_format, bring_to_front)
                 await event.send(event.image_result(save_path_str))
         except ConnectionError:
+            await self._cleanup_remote_session(session_id)
             await event.send(event.plain_result("远程客户端未连接。请确保远程脚本正在运行并已连接。"))
         except Exception as e:
             # 某些环境下会抛出 "Timed out" 或自定义的超时提示；这类情况不再向用户报错，仅记录为警告
             msg = str(e).strip().lower()
             if "timed out" in msg or "超时" in msg:
                 logger.warning(f"远程截图等待超时（已忽略）：{e}")
+                await event.send(event.plain_result("远程截图等待超时，已跳过本次截图。"))
                 return
             logger.error(f"处理远程游戏动作时出错: {e}")
+            if "窗口未找到" in str(e) or "已关闭" in str(e):
+                await self._cleanup_remote_session(session_id)
+                await event.send(event.plain_result(f"远程操作失败: {e}。游戏已自动结束，请重新 /gal start。"))
+                return
             await event.send(event.plain_result(f"远程操作失败: {e}。会话保持不变，请稍后重试 /gal resend 或继续操作。"))
     @filter.command_group("gal", alias={"g"})
     async def gal_group(self): ...
@@ -481,7 +565,7 @@ class GalgamePlayerPlugin(Star):
         
         # 保存路径按模式/配置决定扩展名，远程可选 JPEG
         if self.mode == "remote":
-            use_jpeg = bool(self.config.get("remote_use_jpeg", False))
+            use_jpeg = self._cfg_bool("remote_use_jpeg")
             ext = "jpg" if use_jpeg else "png"
             save_path = self.temp_img_dir / f"{session_id}.{ext}"
         else:
@@ -509,6 +593,7 @@ class GalgamePlayerPlugin(Star):
                     take_screenshot=True,
                 )
             except Exception as e:
+                await self._cleanup_remote_session(session_id)
                 yield event.plain_result(f"启动远程游戏失败: {e}")
 
         elif self.mode == "local" and self.local_mode_available:
@@ -542,7 +627,10 @@ class GalgamePlayerPlugin(Star):
         session_id = self.get_session_id(event)
         if session_id in self.game_sessions:
             if self.mode == "remote" and self.remote_server and self.remote_server.client:
-                await self.remote_server.remote_stop_session(session_id) # 通知客户端清理
+                try:
+                    await self.remote_server.remote_stop_session(session_id) # 通知客户端清理
+                except Exception as exc:
+                    logger.warning(f"通知远程客户端停止会话失败: {exc}")
             
             if (save_path := self.game_sessions[session_id]['save_path']).exists():
                 save_path.unlink()
@@ -596,8 +684,9 @@ class GalgamePlayerPlugin(Star):
         self.buttons_data.setdefault(window_title, {})
         self._schedule_registration_timeout(session_id, event)
 
+        timeout_secs = int(self._get_registration_timeout())
         yield event.plain_result(
-            "请直接在机器人发送的截图上标注需要点击的按钮位置，并在 60 秒内发回。"
+            f"请直接在机器人发送的截图上标注需要点击的按钮位置，并在 {timeout_secs} 秒内发回。"
         )
         event.stop_event()
 
@@ -629,7 +718,7 @@ class GalgamePlayerPlugin(Star):
             return
 
         now = time.time()
-        if now - session.get("last_triggered_time", 0) < self.config.get("cooldown_seconds", 3.0):
+        if now - session.get("last_triggered_time", 0) < self._cfg_float("cooldown_seconds"):
             yield event.plain_result("指令触发过于频繁，请稍后再试。")
             event.stop_event()
             return
@@ -651,15 +740,9 @@ class GalgamePlayerPlugin(Star):
             event.stop_event()
             return
 
-        screenshot_on_click = self.config.get("screenshot_on_click", True)
-        if isinstance(screenshot_on_click, str):
-            screenshot_on_click = screenshot_on_click.lower() not in {"0", "false", "no"}
+        screenshot_on_click = self._cfg_bool("screenshot_on_click")
         if screenshot_on_click:
-            delay_seconds = self.config.get("screenshot_delay_seconds", 0.5)
-            try:
-                delay_seconds = float(delay_seconds)
-            except (TypeError, ValueError):
-                delay_seconds = 0.5
+            delay_seconds = self._cfg_float("screenshot_delay_seconds")
             if delay_seconds > 0:
                 await asyncio.sleep(delay_seconds)
             await self._handle_game_action(event, session, key_to_press=None, take_screenshot=True)
@@ -723,7 +806,7 @@ class GalgamePlayerPlugin(Star):
         session_id = self.get_session_id(event)
         if session_id in self.game_sessions:
             session = self.game_sessions[session_id]
-            if time.time() - session.get("last_triggered_time", 0) < self.config.get("cooldown_seconds", 3.0):
+            if time.time() - session.get("last_triggered_time", 0) < self._cfg_float("cooldown_seconds"):
                 return
             session["last_triggered_time"] = time.time()
             await self._handle_game_action(event, session, take_screenshot=True)
@@ -738,10 +821,10 @@ class GalgamePlayerPlugin(Star):
         session_id = self.get_session_id(event)
         if session_id in self.game_sessions:
             session = self.game_sessions[session_id]
-            if time.time() - session.get("last_triggered_time", 0) < self.config.get("cooldown_seconds", 3.0):
+            if time.time() - session.get("last_triggered_time", 0) < self._cfg_float("cooldown_seconds"):
                 return
             session["last_triggered_time"] = time.time()
-            should_screenshot = self.config.get("screenshot_on_type", True)
+            should_screenshot = self._cfg_bool("screenshot_on_type")
             await self._handle_game_action(event, session, key_to_press=actual_key_name, take_screenshot=should_screenshot)
         else:
             await event.send(event.plain_result("当前没有正在进行的游戏。"))
@@ -749,8 +832,8 @@ class GalgamePlayerPlugin(Star):
 
     @gal_group.command("help", alias={"帮助"})
     async def show_help(self, event: AstrMessageEvent):
-        quick_key = self.config.get("quick_advance_key", "space")
-        input_method = self.config.get("input_method", "PostMessage")
+        quick_key = self._cfg_str("quick_advance_key")
+        input_method = self._cfg_str("input_method")
         help_text = (
             f"🎮 Galgame 插件帮助 (当前模式: {self.mode.upper()}) 🎮\n"
             "--------------------\n"
@@ -780,7 +863,7 @@ class GalgamePlayerPlugin(Star):
         session = self.game_sessions[session_id]
 
         # 统一的冷却时间检查
-        if time.time() - session.get("last_triggered_time", 0) < self.config.get("cooldown_seconds", 3.0):
+        if time.time() - session.get("last_triggered_time", 0) < self._cfg_float("cooldown_seconds"):
             return
         session["last_triggered_time"] = time.time()
 
@@ -817,16 +900,10 @@ class GalgamePlayerPlugin(Star):
                 return
 
             # 点击后根据配置截图
-            screenshot_on_click = self.config.get("screenshot_on_click", True)
-            if isinstance(screenshot_on_click, str):
-                screenshot_on_click = screenshot_on_click.lower() not in {"0", "false", "no"}
+            screenshot_on_click = self._cfg_bool("screenshot_on_click")
 
             if screenshot_on_click:
-                delay_seconds = self.config.get("screenshot_delay_seconds", 0.5)
-                try:
-                    delay_seconds = float(delay_seconds)
-                except (TypeError, ValueError):
-                    delay_seconds = 0.5
+                delay_seconds = self._cfg_float("screenshot_delay_seconds")
                 if delay_seconds > 0:
                     await asyncio.sleep(delay_seconds)
 
@@ -835,7 +912,7 @@ class GalgamePlayerPlugin(Star):
 
         else:
             # 保持原有的按键模式
-            quick_key = self.config.get("quick_advance_key", "space")
+            quick_key = self._cfg_str("quick_advance_key")
             await self._handle_game_action(event, session, key_to_press=quick_key)
 
     @filter.event_message_type(filter.EventMessageType.ALL)
@@ -874,7 +951,7 @@ class GalgamePlayerPlugin(Star):
         # 戳一戳冷却
         sender_id_str = str(user_id)
         now = time.time()
-        cooldown = self.config.get("cooldown_seconds", 3.0)
+        cooldown = self._cfg_float("cooldown_seconds")
         last_poke = self.last_poke_time.get(sender_id_str, 0)
         if now - last_poke < cooldown:
             return

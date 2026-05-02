@@ -20,6 +20,9 @@ import configparser
 from pathlib import Path
 import threading
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 CONFIG_FILE = Path("gal_client_config.ini")
 
 def create_default_config():
@@ -50,10 +53,6 @@ if not config:
 
 SERVER_URI = config.get('Connection', 'ServerURI', fallback='ws://localhost:8765')
 SECRET_TOKEN = config.get('Connection', 'SecretToken', fallback='')
-
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 wintypes.ULONG_PTR = wintypes.WPARAM
 class MOUSEINPUT(ctypes.Structure):
@@ -287,6 +286,14 @@ def click_window_by_ratio(window, x_ratio: float, y_ratio: float, method: str):
 async def send_json(websocket, data):
     await websocket.send(json.dumps(data))
 
+
+async def send_response(websocket, request_id: str, status: str, error: str | None = None, **extra):
+    payload = {"request_id": request_id, "status": status}
+    if error:
+        payload["error"] = error
+    payload.update(extra)
+    await send_json(websocket, payload)
+
 async def handle_command(websocket, command):
     global active_windows
     action = command.get("action")
@@ -299,14 +306,27 @@ async def handle_command(websocket, command):
     logger.info(f"收到会话 [{session_id}] 的指令: {action}")
     
     try:
+        request_id = command.get("request_id")
+
         if action == "start_session":
-            find_and_store_window(session_id, command.get("title"))
+            if not request_id:
+                logger.warning(f"会话 [{session_id}] 的 start_session 指令缺少 request_id。")
+                return
+            window_title = command.get("title")
+            if find_and_store_window(session_id, window_title):
+                await send_response(websocket, request_id, "success")
+            else:
+                await send_response(websocket, request_id, "error", f"找不到窗口 '{window_title}'。")
             return
         
         if action == "stop_session":
+            if not request_id:
+                logger.warning(f"会话 [{session_id}] 的 stop_session 指令缺少 request_id。")
+                return
             if session_id in active_windows:
                 del active_windows[session_id]
                 logger.info(f"会话 [{session_id}] 已结束。")
+            await send_response(websocket, request_id, "success")
             return
 
         game_window = active_windows.get(session_id)
@@ -325,8 +345,9 @@ async def handle_command(websocket, command):
                 click_window_by_ratio(game_window, float(x_ratio), float(y_ratio), command.get("method", "PostMessage"))
         
         elif action == "screenshot":
-            request_id = command.get("request_id")
-            if not request_id: return
+            if not request_id:
+                logger.warning(f"会话 [{session_id}] 的 screenshot 指令缺少 request_id。")
+                return
             
             delay = command.get("delay", 0)
             if delay > 0: await asyncio.sleep(delay)
@@ -346,13 +367,13 @@ async def handle_command(websocket, command):
                 pass
             # 编码 -> base64（尽量在当前线程完成，避免 dxcam 跨线程问题）
             img_b64 = _encode_image_to_base64(im, img_format)
-            await send_json(websocket, {"request_id": request_id, "status": "success", "image_data": img_b64, "format": img_format})
+            await send_response(websocket, request_id, "success", image_data=img_b64, format=img_format)
             logger.info(f"会话 [{session_id}] 截图完成: req={request_id}, bytes={len(img_b64)}(b64)")
 
     except Exception as e:
         logger.error(f"处理会话 [{session_id}] 指令 '{action}' 时出错: {e}")
-        if action == "screenshot" and "request_id" in command:
-            await send_json(websocket, {"request_id": command["request_id"], "status": "error", "error": str(e)})
+        if "request_id" in command:
+            await send_response(websocket, command["request_id"], "error", str(e))
 
 async def client_handler(uri):
     if not SECRET_TOKEN or SECRET_TOKEN == "YOUR_SECRET_TOKEN_HERE":

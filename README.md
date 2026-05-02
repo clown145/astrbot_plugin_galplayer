@@ -1,11 +1,19 @@
 
-# 🎮 AstrBot Galgame 同乐插件 v1.3.1
+# 🎮 AstrBot Galgame 同乐插件 v1.3.2
 
 你是否曾想过和群友们一起在聊天群里玩 Galgame 或视觉小说？这个插件将这个想法变为了现实！
 
 本插件能够捕捉你电脑上指定的游戏窗口画面，通过截图的方式实时“直播”到聊天群里。群里的每一个人都可以通过简单的指令来控制游戏（例如推进对话、进行选择），实现云玩 Galgame 的有趣体验。
 
 ## 注意：小心HCG
+
+## ✨ v1.3.2 版本更新说明
+
+*   **修复远程截图双重延迟**：远程模式下按键后截图不再重复等待，响应速度更快。
+*   **优化超时提示**：远程截图超时时会向用户发送提示，不再静默忽略。
+*   **修复配置文件格式切换遗留问题**：远程模式下 JPEG/PNG 切换时会自动清理旧文件，避免磁盘垃圾。
+*   **统一配置读取**：内部配置访问已统一为类型安全的 helper 方法，减少默认值漂移风险。
+*   **优化配置顺序**：WebUI 配置页面和文档中的配置项顺序更符合使用流程。
 
 ## ✨ v1.3.1 版本更新说明
 
@@ -25,7 +33,7 @@
 ## ✨ v1.1.0 版本更新说明
 
 *   ✨ **全新远程模式 (Remote Mode)**：现在，你可以在一台电脑或服务器上运行AstrBot，同时在另一台性能更好的游戏电脑上玩游戏。
-*   🔐 **安全连接**：远程模式使用共享密钥（Secret Token）进行双向验证，确保只有你授权的客户端才能连接到插件，保障了连接的私密性和安全性。
+*   🔐 **共享密钥校验**：远程模式使用共享密钥（Secret Token）进行连接验证，确保只有持有密钥的客户端才能连接到插件。
 
 ## 🚀 核心功能
 
@@ -73,6 +81,8 @@
     *   `ServerURI`: 修改为运行AstrBot服务器的**IP地址**和端口。
     *   `SecretToken`: **必须填入和插件配置中 `remote_secret_token` 完全相同的密码**。
 5.  **启动客户端**：保存配置文件后，再次运行 `python remote_client.py`。如果看到“服务器验证成功”的日志，说明你已成功连接！保持这个命令行窗口运行即可。
+
+> 注意：当前远程模式默认使用 `ws://` 明文 WebSocket，只做共享密钥校验，不提供 TLS 加密。请仅在可信局域网或你自己负责保护的网络环境中使用，不要直接暴露在公网。
 
 ## 📖 使用方法
 
@@ -128,17 +138,18 @@
 | **`mode`** | `下拉选择` | `local` | **模式开关**。`local` 表示本地模式，`remote` 表示远程模式。 |
 | `remote_server` | `对象` | `...` | 远程模式下服务器的监听地址和端口。通常保持默认。 |
 | `remote_secret_token`| `字符串` | `""` | **远程模式连接密钥**。必须与客户端配置文件中的 `SecretToken` 一致。 |
-| **`input_method`** | `下拉选择` | `SendInput` | **最重要的配置！** 选择按键的输入模式。<br>- **`SendInput`**: 前台模式，兼容性最强，但游戏窗口必须是当前活动窗口。<br>- **`PostMessage`**: 后台模式，兼容性较差。 |
-| `foreground_use_dxcam` | `布尔` | `true` | 仅在前台模式（`input_method=SendInput`）下生效。开启后使用 dxcam 进行截图（本地与远程均适用），能避免部分游戏 UI 丢失；关闭则使用原有 PrintWindow 截图。后台模式（`PostMessage`）不受影响。远程模式在 dxcam 下会使用 JPEG 传输（更快更稳），本地保持 PNG。 |
-| `cooldown_seconds` | `浮点数` | `3.0` | 两次指令之间的最小时间间隔（秒），用于防止刷屏。 |
-| `screenshot_delay_seconds`| `浮点数` | `1.0` | 按键后等待多久再截图（秒）。如果游戏动画较慢，可以适当调高此值。 |
+| **`input_method`** | `下拉选择` | `SendInput` | **最重要的配置！** 选择按键输入模式。<br>- **`SendInput`**: 前台模式，兼容性最强，但游戏窗口必须是当前活动窗口。<br>- **`PostMessage`**: 后台模式，兼容性较差。 |
+| `foreground_use_dxcam` | `布尔` | `true` | 前台模式（`input_method=SendInput`）下是否使用 dxcam 截图。开启后更容易保住部分游戏 UI；关闭则回退到 PrintWindow。 |
+| `background_use_dxcam` | `布尔` | `false` | 后台模式（`input_method=PostMessage`）下是否使用 dxcam 截图。开启后可在后台尽量避免 UI 丢失；关闭则使用 PrintWindow。 |
 | `remote_use_jpeg` | `布尔` | `false` | 远程模式下是否使用 JPEG 编码（更小更快）。关闭则使用 PNG。 |
-| `background_use_dxcam` | `布尔` | `false` | 后台模式（`input_method=PostMessage`）截图是否使用 dxcam。开启后可在后台也尽量避免 UI 丢失；关闭则使用现有 PrintWindow 截图。 |
-| `registration_timeout_seconds` | `浮点数` | `60.0` | `/注册按钮` 流程等待用户回复的超时时间（秒）。
-| `screenshot_on_click` | `布尔` | `true` | 使用 `/点` 或注册流程点击后是否自动发送截图。
-| `quick_advance_key` | `字符串` | `enter` | 设置 `g` 或 `gal` 这条快捷指令所对应的键盘按键。 |
+| `screenshot_on_click` | `布尔` | `true` | 使用 `/点` 或注册流程点击后是否自动发送截图。 |
+| `screenshot_on_type` | `布尔` | `true` | 使用 `/输入`、`/输` 或 `/type` 后是否自动发送截图。 |
 | `poke_to_g` | `布尔` | `true` | **新增**。是否开启戳一戳机器人等于发送 'g' 的功能。默认开启。 |
 | `g_triggers_click` | `布尔` | `false` | **新增**。【高级】将'g'和戳一戳改为点击'快速推进'按钮。解决后台按键失效问题。 |
+| `quick_advance_key` | `字符串` | `enter` | 设置 `g` 或 `gal` 这条快捷指令所对应的键盘按键。 |
+| `cooldown_seconds` | `浮点数` | `3.0` | 两次指令之间的最小时间间隔（秒），用于防止刷屏。 |
+| `screenshot_delay_seconds`| `浮点数` | `1.0` | 按键后等待多久再截图（秒）。如果游戏动画较慢，可以适当调高此值。 |
+| `registration_timeout_seconds` | `浮点数` | `60.0` | `/注册按钮` 流程等待用户回复的超时时间（秒）。 |
 
 ## ❓ 疑难解答 (FAQ)
 
